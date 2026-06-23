@@ -19,30 +19,39 @@ import type {
     ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { TauState } from "./state.ts";
-import { cleanupStaleLogs, detectNonInteractive } from "./utils.ts";
-import { isTmuxAvailable, checkExitCode } from "./tmux.ts";
 import {
-    registerBackgroundJobs,
-} from "./features/background.ts";
+    cleanupStaleLogs,
+    detectNonInteractive,
+    isProcessAlive,
+} from "./utils.ts";
+import { checkExitCode, isTmuxAvailable } from "./tmux.ts";
+import {
+    cleanupStaleTmuxRunDirs,
+    cleanupTmuxRunDir,
+} from "./features/bash-tmux.ts";
+import { registerBackgroundJobs } from "./features/background/index.ts";
 import { registerBackgroundCommands } from "./features/background-commands.ts";
 import { registerAgentBackground } from "./features/agent-background.ts";
 import {
-    cleanupTmuxRunDir,
-    cleanupStaleTmuxRunDirs,
-    attachTmuxContext,
-} from "./features/bash-tmux.ts";
-import type { BackgroundJob } from "./types.ts";
+    CUSTOM_TYPE,
+    PERSISTED_STATE_SCHEMA_VERSION,
+    type BackgroundJob,
+} from "./types.ts";
+
+interface PersistedState {
+    schemaVersion?: number;
+    jobs?: Array<
+        [string, Omit<BackgroundJob, "proc" | "donePromise" | "resolveDone">]
+    >;
+    jobCounter?: number;
+}
 
 export default function (pi: ExtensionAPI) {
     const state = new TauState();
 
-    // ── Register features ────────────────────────────────────────────
-
     registerBackgroundJobs(pi, state);
     registerBackgroundCommands(pi, state);
     registerAgentBackground(pi, state);
-
-    // ── Cross-cutting tool_call handler ─────────────────────────────
 
     pi.on("tool_call", async (event): Promise<ToolCallEventResult> => {
         // Agent backgrounding: when the user has pressed Ctrl+B during agent
@@ -75,10 +84,7 @@ export default function (pi: ExtensionAPI) {
         return {};
     });
 
-    // ── Session lifecycle ───────────────────────────────────────────
-
     pi.on("session_start", async (_event, ctx) => {
-        // ── Tmux detection ────────────────────────────────────────
         state.tmuxAvailable = isTmuxAvailable();
         if (!state.tmuxAvailable && !state.tmuxWarningShown) {
             state.tmuxWarningShown = true;
@@ -88,84 +94,45 @@ export default function (pi: ExtensionAPI) {
             );
         }
 
-        // ── Print/non-interactive detection ──────────────────────
-        // Mirror pi's own mode decision (print || !stdin.isTTY). When
-        // non-interactive there is no agent loop to answer the bash tool's
-        // auto-background job_decide prompt, so the tool must run commands to
-        // completion instead of backgrounding on timeout.
         state.nonInteractive = detectNonInteractive(
             process.argv,
             Boolean(process.stdin.isTTY)
         );
 
-        // Clean up run directories and tmux sessions from dead pi processes
         if (state.tmuxAvailable) {
             cleanupStaleTmuxRunDirs();
         }
 
-        // Restore background-tasks state
         const entries = ctx.sessionManager.getEntries();
-        for (const entry of entries) {
-            if (
-                entry.type === "custom" &&
-                entry.customType === "background-tasks-state"
-            ) {
-                const data = entry.data as {
-                    jobs?: [
-                        string,
-                        Omit<
-                            BackgroundJob,
-                            "proc" | "donePromise" | "resolveDone"
-                        >,
-                    ][];
-                    jobCounter?: number;
-                };
-                if (data.jobs) {
-                    for (const [id, jobData] of data.jobs) {
-                        if (jobData.status === "running") {
-                            // Tmux jobs store context in an ad-hoc `tmux` property
-                            // that survives serialisation.
-                            const tmux: unknown = (
-                                jobData as unknown as Record<string, unknown>
-                            ).tmux;
-                            if (
-                                typeof tmux === "object" &&
-                                tmux !== null &&
-                                "exitCodeFile" in tmux
-                            ) {
-                                // Tmux job — check sentinel file instead of pid
-                                const exitCodeFile = (
-                                    tmux as { exitCodeFile: string }
-                                ).exitCodeFile;
-                                const code = checkExitCode(exitCodeFile);
-                                if (code !== undefined) {
-                                    jobData.status = "completed";
-                                    jobData.exitCode = code;
-                                }
-                                // else: still running — reattach the context
-                                attachTmuxContext(
-                                    jobData,
-                                    tmux as import("./features/bash-tmux.ts").TmuxJobContext
-                                );
-                            } else {
-                                // Direct-spawn job — check if pid is alive
-                                try {
-                                    process.kill(jobData.pid, 0);
-                                } catch {
-                                    jobData.status = "completed";
-                                }
+        const stateEntries = entries.filter(
+            (e) =>
+                e.type === "custom" &&
+                (e as { customType?: string }).customType === CUSTOM_TYPE.state
+        ) as Array<{ type: "custom"; customType: string; data: unknown }>;
+
+        // Apply in order — last entry wins. Oldest entries first so newer
+        // writes overwrite them.
+        for (const entry of stateEntries) {
+            const data = entry.data as PersistedState;
+            if (data.jobs) {
+                for (const [id, jobData] of data.jobs) {
+                    if (jobData.status === "running") {
+                        const tmux = jobData.tmux;
+                        if (tmux && "exitCodeFile" in tmux) {
+                            const code = checkExitCode(tmux.exitCodeFile);
+                            if (code !== undefined) {
+                                jobData.status = "completed";
+                                jobData.exitCode = code;
                             }
+                        } else if (!isProcessAlive(jobData.pid)) {
+                            jobData.status = "completed";
                         }
-                        state.backgroundJobs.set(id, jobData);
                     }
+                    state.backgroundJobs.set(id, jobData);
                 }
-                if (typeof data.jobCounter === "number") {
-                    state.jobCounter = Math.max(
-                        state.jobCounter,
-                        data.jobCounter
-                    );
-                }
-                break;
+            }
+            if (typeof data.jobCounter === "number") {
+                state.jobCounter = Math.max(state.jobCounter, data.jobCounter);
             }
         }
 
@@ -175,7 +142,8 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_shutdown", async (_event, _ctx) => {
         cleanupTmuxRunDir();
 
-        pi.appendEntry("background-tasks-state", {
+        pi.appendEntry(CUSTOM_TYPE.state, {
+            schemaVersion: PERSISTED_STATE_SCHEMA_VERSION,
             jobs: Array.from(state.backgroundJobs.entries()).map(
                 ([id, job]) => [
                     id,

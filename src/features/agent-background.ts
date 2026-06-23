@@ -6,9 +6,6 @@
  * constructs a continuation prompt, and spawns `pi -p` in the background.
  * Output is written to /tmp/pi-bg-<jobId>.log; the agent is notified on
  * completion via a follow-up message.
- *
- * When pi's SessionManager supports session forking, a fork-and-resume path
- * will be added that lets the background agent continue the full conversation.
  */
 
 import { spawn } from "node:child_process";
@@ -28,11 +25,14 @@ import { tmpdir } from "node:os";
 import type { TauState } from "../state.ts";
 import type { BackgroundJob } from "../types.ts";
 import {
+    assertCwdExists,
     createJobDonePromise,
     generateJobId,
+    isEmptyCommand,
     killProcessGroup,
     logPathForJob,
     markJobTerminal,
+    exitCodeToStatus,
 } from "../utils.ts";
 import {
     silenceJobAfterKill,
@@ -40,48 +40,20 @@ import {
     clearPendingDecision,
     notifyCompletion,
     updateWidget,
-} from "./background.ts";
+} from "./background/index.ts";
 
-// ─── Context continuity ─────────────────────────────────────────────
+// ─── Context extraction ─────────────────────────────────────────────
 
-/** Maximum fraction of context window that a forked session can consume. */
-const MAX_CONTEXT_FRACTION = 0.4;
-
-/**
- * Choose between fork-and-resume and summary-only.
- * Below MAX_CONTEXT_FRACTION, fork would be safe — the agent has room to continue.
- * Above, summary-only gives it more context headroom.
- *
- * Currently both paths use summary-only. When session forking is available,
- * the fork path will use `pi --resume <fork>` instead.
- */
-export function chooseBackgroundPath(
-    conversationBytes: number,
-    contextWindowTokens: number
-): "fork" | "summary" {
-    const estimatedTokens = conversationBytes / 4;
-    const fraction = estimatedTokens / contextWindowTokens;
-    return fraction < MAX_CONTEXT_FRACTION ? "fork" : "summary";
-}
-
-/** Messages that carry a content field (user/assistant/toolResult). */
-export interface ContentMessage {
-    role: string;
-    content: string | { type: string; text?: string }[];
-}
-
-/** Type guard: does this session entry carry a message with a content field? */
-function isContentMessageEntry(
+/** Type guard: this session entry carries a `message` field with extractable
+ *  text content. Mirrors the upstream `SessionMessageEntry` discriminated
+ *  union but uses a local structural type for the fields we read. */
+function isMessageEntry(
     entry: SessionEntry
-): entry is SessionEntry & { message: ContentMessage } {
-    if (entry.type !== "message") return false;
-    if (!("message" in entry)) return false;
-    const msg = (entry as { message: unknown }).message;
-    if (typeof msg !== "object" || msg === null) return false;
-    return "content" in msg;
+): entry is SessionEntry & { message: { role: string; content: unknown } } {
+    return entry.type === "message" && "message" in entry;
 }
 
-/** Extract text from a content field (string or array of content blocks). */
+/** Extract plain text from a message content field (string or content blocks). */
 export function extractTextFromContent(
     content: string | { type: string; text?: string }[]
 ): string {
@@ -99,42 +71,39 @@ export function extractTextFromContent(
         .join("\n");
 }
 
-/**
- * Extract the last assistant message text from session entries.
- */
+/** Last assistant message text from the session, or "" if none. */
 export function extractLastAssistantSummary(entries: SessionEntry[]): string {
     for (let i = entries.length - 1; i >= 0; i--) {
         const entry = entries[i];
-        if (
-            isContentMessageEntry(entry) &&
-            entry.message.role === "assistant"
-        ) {
-            return extractTextFromContent(entry.message.content).slice(-2000);
+        if (isMessageEntry(entry) && entry.message.role === "assistant") {
+            return extractTextFromContent(
+                entry.message.content as Parameters<typeof extractTextFromContent>[0]
+            ).slice(-2_000);
         }
     }
     return "";
 }
 
-/**
- * Extract the original user prompt from session entries.
- */
+/** First user prompt in the session, or "" if none. */
 export function extractOriginalPrompt(entries: SessionEntry[]): string {
     for (const entry of entries) {
-        if (isContentMessageEntry(entry) && entry.message.role === "user") {
-            return extractTextFromContent(entry.message.content).slice(0, 2000);
+        if (isMessageEntry(entry) && entry.message.role === "user") {
+            return extractTextFromContent(
+                entry.message.content as Parameters<typeof extractTextFromContent>[0]
+            ).slice(0, 2_000);
         }
     }
     return "";
 }
 
-/**
- * Estimate the byte size of the conversation from session entries.
- */
+/** Sum of all message text bytes in the session. */
 export function estimateConversationBytes(entries: SessionEntry[]): number {
     let bytes = 0;
     for (const entry of entries) {
-        if (isContentMessageEntry(entry)) {
-            bytes += extractTextFromContent(entry.message.content).length;
+        if (isMessageEntry(entry)) {
+            bytes += extractTextFromContent(
+                entry.message.content as Parameters<typeof extractTextFromContent>[0]
+            ).length;
         }
     }
     return bytes;
@@ -180,20 +149,17 @@ export function registerAgentBackground(
             _onUpdate,
             ctx
         ): Promise<AgentToolResult<undefined>> {
+            if (isEmptyCommand(params.prompt)) {
+                throw new Error("Prompt is empty.");
+            }
+            const cwd = params.cwd ?? ctx.cwd;
+            assertCwdExists(cwd);
+
             const jobId = generateJobId(++state.jobCounter);
             const logPath = logPathForJob(jobId);
             mkdirSync(logPath.replace(/\/[^/]+$/, ""), { recursive: true });
 
-            // Decide context path
             const entries = ctx.sessionManager.getEntries();
-            const conversationBytes = estimateConversationBytes(entries);
-            const contextWindowTokens = state.contextWindowTokens ?? 32_768;
-            const path = chooseBackgroundPath(
-                conversationBytes,
-                contextWindowTokens
-            );
-
-            // Build continuation prompt
             const summary = extractLastAssistantSummary(entries);
             const originalPrompt = extractOriginalPrompt(entries);
 
@@ -213,9 +179,8 @@ export function registerAgentBackground(
             const promptFile = `${tmpdir()}/pi-bg-prompt-${jobId}.md`;
             writeFileSync(promptFile, promptContent);
 
-            // Pass the current model to the spawned pi so it uses the same
-            // provider/model rather than falling back to the default config.
-            // Use the provider/id format so pi can resolve the correct provider.
+            // Resolve `provider/id` so the spawned pi uses the same model
+            // instead of falling back to the default config.
             const model = ctx.model;
             const modelArg = model
                 ? `${model.provider}/${model.id}`
@@ -229,7 +194,7 @@ export function registerAgentBackground(
             ];
 
             const proc = spawn("pi", spawnArgs, {
-                cwd: params.cwd ?? ctx.cwd,
+                cwd,
                 detached: true,
                 stdio: ["pipe", "pipe", "pipe"],
             });
@@ -243,7 +208,6 @@ export function registerAgentBackground(
                 throw new Error("Failed to spawn background agent process");
             }
 
-            // Pipe output to log file
             const logStream = createWriteStream(logPath, { flags: "w" });
             proc.stdout?.pipe(logStream, { end: false });
             proc.stderr?.pipe(logStream, { end: false });
@@ -275,14 +239,11 @@ export function registerAgentBackground(
 
             const cleanupFiles = [promptFile];
 
-            proc.on("close", (code) => {
+            const onTerminal = (code: number | null) => {
                 cancelStall();
                 logStream.end();
-                markJobTerminal(
-                    job,
-                    code === 0 || code === null ? "completed" : "failed",
-                    code ?? 0
-                );
+                if (job.status !== "running") return; // close + error race
+                markJobTerminal(job, exitCodeToStatus(code), code ?? 0);
                 clearPendingDecision(state, job);
                 notifyCompletion(job, state, pi, ctx);
                 updateWidget(state, ctx);
@@ -293,38 +254,23 @@ export function registerAgentBackground(
                         /* already gone */
                     }
                 }
-            });
+            };
 
-            proc.on("error", () => {
-                cancelStall();
-                logStream.end();
-                markJobTerminal(job, "failed");
-                clearPendingDecision(state, job);
-                notifyCompletion(job, state, pi, ctx);
-                updateWidget(state, ctx);
-                for (const f of cleanupFiles) {
-                    try {
-                        unlinkSync(f);
-                    } catch {
-                        /* already gone */
-                    }
-                }
-            });
+            proc.on("close", onTerminal);
+            proc.on("error", () => onTerminal(1));
 
             updateWidget(state, ctx);
 
-            const pathLabel =
-                path === "fork" ? "fork-and-resume" : "summary-only";
             return {
                 content: [
                     {
                         type: "text" as const,
                         text:
-                            `Started background agent ${jobId} (${pathLabel})\n` +
+                            `Started background agent ${jobId}\n` +
                             `Prompt: ${params.prompt.slice(0, 100)}${params.prompt.length > 100 ? "…" : ""}\n` +
                             `PID: ${proc.pid}\n` +
                             `Output: ${logPath}\n` +
-                            `Context: ${(conversationBytes / 1024).toFixed(0)} KB / ${contextWindowTokens} tokens`,
+                            `Context: ${(estimateConversationBytes(entries) / 1024).toFixed(0)} KB`,
                     },
                 ],
                 details: undefined,

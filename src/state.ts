@@ -33,11 +33,6 @@ export class TauState {
     completedJobCount = 0;
     failedJobCount = 0;
 
-    /** Recent terminal jobs kept for `jobs output` lookups (max 20). */
+    /** Recent terminal jobs kept for `jobs output` lookups. */
     recentTerminalJobs: BackgroundJob[] = [];
-
-    // ── Background agent context ──────────────────────────────────────
-
-    /** Model context window in tokens. Used by agent_bg to choose fork vs summary. */
-    contextWindowTokens?: number;
 }

@@ -11,15 +11,19 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { TauState } from "../state.ts";
 import type { BackgroundJob, UiContext } from "../types.ts";
-import { updateWidget, silenceJobAfterKill } from "./background.ts";
 import {
-    MAX_OUTPUT_PREVIEW_CHARS,
+    killJob,
+    silenceJobAfterKill,
+    updateWidget,
+} from "./background/index.ts";
+import {
+    COMMAND_PREVIEW_CHARS,
     createJobDonePromise,
     formatDuration,
-    killProcessGroup,
+    MAX_OUTPUT_PREVIEW_CHARS,
     readOutputTail,
 } from "../utils.ts";
-import { getTmuxContext, killTmuxJob } from "./bash-tmux.ts";
+import { CUSTOM_TYPE } from "../types.ts";
 
 // ── Background shortcut handler (Ctrl+B) — signal-based ────────────
 
@@ -36,7 +40,7 @@ export async function handleBackgroundShortcut(
 
         pi.sendMessage(
             {
-                customType: "agent-resume",
+                customType: CUSTOM_TYPE.agentResume,
                 content: "Continuing where you left off.",
                 display: true,
             },
@@ -45,12 +49,23 @@ export async function handleBackgroundShortcut(
         return;
     }
 
-    // Trigger background via the signal on the RunningProcess
+    // Only set the agent-backgrounded flag when we actually have a running
+    // process to background — otherwise the user sees a phantom "Backgrounded"
+    // state and a no-op resume follow-up.
+    let backgroundedSomething = false;
     if (state.currentlyRunningToolCallId) {
-        const rp = state.runningProcesses.get(state.currentlyRunningToolCallId);
+        const rp = state.runningProcesses.get(
+            state.currentlyRunningToolCallId
+        );
         if (rp) {
             rp.triggerBackground();
+            backgroundedSomething = true;
         }
+    }
+
+    if (!backgroundedSomething) {
+        ctx.ui.notify("No running process to background.", "warning");
+        return;
     }
 
     state.agentBackgrounded = true;
@@ -84,7 +99,7 @@ async function showTaskDetail(
     if (job.status === "running") {
         const actions = ["Attach (wait for completion)", "Show Output", "Kill"];
         const action = await ctx.ui.select(
-            `${statusIcon} ${job.id} · ${job.command.slice(0, 50)} · ${duration}`,
+            `${statusIcon} ${job.id} · ${job.command.slice(0, COMMAND_PREVIEW_CHARS.detail)} · ${duration}`,
             actions
         );
         if (action === undefined) return;
@@ -106,7 +121,7 @@ async function showTaskDetail(
 
             pi.sendMessage(
                 {
-                    customType: "bg-attach",
+                    customType: CUSTOM_TYPE.attach,
                     content: fullText,
                     display: true,
                     details: { jobId: job.id, logPath: job.logPath },
@@ -120,18 +135,13 @@ async function showTaskDetail(
                 MAX_OUTPUT_PREVIEW_CHARS
             );
             await ctx.ui.editor(
-                `${statusIcon} ${job.id}: ${job.command.slice(0, 50)}`,
+                `${statusIcon} ${job.id}: ${job.command.slice(0, COMMAND_PREVIEW_CHARS.detail)}`,
                 `Command: ${job.command}\n` +
                     `PID: ${job.pid} · Started: ${new Date(job.startTime).toLocaleString()}\n` +
                     `Duration: ${duration} · Log: ${job.logPath}\n\n--- OUTPUT ---\n${output}`
             );
         } else if (action === actions[2]) {
-            const tmuxCtx = getTmuxContext(job);
-            if (tmuxCtx) {
-                killTmuxJob(job);
-            } else if (job.proc) {
-                killProcessGroup(job.proc.pid!, "SIGTERM");
-            }
+            killJob(job);
             silenceJobAfterKill(job);
             ctx.ui.notify(`Killed ${job.id}`, "info");
             updateWidget(state, ctx);
@@ -139,7 +149,7 @@ async function showTaskDetail(
     } else {
         const actions = ["Show Output", "Remove from List"];
         const action = await ctx.ui.select(
-            `${statusIcon} ${job.id} · ${job.command.slice(0, 50)} · ${job.status}`,
+            `${statusIcon} ${job.id} · ${job.command.slice(0, COMMAND_PREVIEW_CHARS.detail)} · ${job.status}`,
             actions
         );
         if (action === undefined) return;
@@ -150,7 +160,7 @@ async function showTaskDetail(
                 MAX_OUTPUT_PREVIEW_CHARS
             );
             await ctx.ui.editor(
-                `${statusIcon} ${job.id}: ${job.command.slice(0, 50)}`,
+                `${statusIcon} ${job.id}: ${job.command.slice(0, COMMAND_PREVIEW_CHARS.detail)}`,
                 `Command: ${job.command}\n` +
                     `PID: ${job.pid} · Started: ${new Date(job.startTime).toLocaleString()}\n` +
                     `Status: ${job.status} · Exit code: ${job.exitCode ?? "n/a"}\n` +
@@ -181,7 +191,9 @@ export async function showTasksInterface(
     }
     for (const job of runningJobs) {
         const duration = formatDuration(Date.now() - job.startTime);
-        items.push(`◐ ${job.id}: ${job.command.slice(0, 40)} · ${duration}`);
+        items.push(
+            `◐ ${job.id}: ${job.command.slice(0, COMMAND_PREVIEW_CHARS.taskList)} · ${duration}`
+        );
     }
     for (const job of finishedJobs) {
         const statusIcon =
@@ -190,7 +202,9 @@ export async function showTasksInterface(
                 : job.status === "failed"
                   ? "❌"
                   : "🛑";
-        items.push(`${statusIcon} ${job.id}: ${job.command.slice(0, 40)}`);
+        items.push(
+            `${statusIcon} ${job.id}: ${job.command.slice(0, COMMAND_PREVIEW_CHARS.taskList)}`
+        );
     }
 
     if (items.length === 0) {
@@ -254,12 +268,7 @@ export function registerBackgroundCommands(
             }
 
             const job = runningJobs[0];
-            const tmuxCtx = getTmuxContext(job);
-            if (tmuxCtx) {
-                killTmuxJob(job);
-            } else if (job.proc) {
-                killProcessGroup(job.proc.pid!, "SIGTERM");
-            }
+            killJob(job);
             silenceJobAfterKill(job);
             ctx.ui.notify(`Killed ${job.id}`, "info");
             updateWidget(state, ctx);
@@ -324,7 +333,7 @@ export function registerBackgroundCommands(
 
                 pi.sendMessage(
                     {
-                        customType: "bg-attach",
+                        customType: CUSTOM_TYPE.attach,
                         content: fullText,
                         display: true,
                         details: {

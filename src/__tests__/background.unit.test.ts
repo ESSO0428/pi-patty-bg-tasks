@@ -5,12 +5,12 @@ import {
     clearPendingDecision,
     lookupJob,
     startTimeoutTimer,
-} from "../features/background.ts";
+} from "../features/background/index.ts";
 import { registerBackgroundCommands } from "../features/background-commands.ts";
 import { TauState } from "../state.ts";
 import type { BackgroundJob, RunningProcess } from "../types.ts";
 import { createJobDonePromise } from "../utils.ts";
-import { silenceJobAfterKill } from "../features/background.ts";
+import { silenceJobAfterKill } from "../features/background/index.ts";
 
 /** Helper to create a BackgroundJob with all required fields. */
 function makeJob(
@@ -670,32 +670,10 @@ void describe("detectBlockedSleep", () => {
 
 // ─── Background agent helpers ───────────────────────────────────────────
 
-import { chooseBackgroundPath } from "../features/agent-background.ts";
+// chooseBackgroundPath was removed (the fork/summary decision was a no-op
+// label since both code paths spawned identically). The agent-bg feature
+// now always uses summary-only context.
 
-void describe("chooseBackgroundPath", () => {
-    void it("chooses fork when conversation is small", () => {
-        // 4KB conversation, 128K context window → ~1K tokens / 128K = ~0.8%
-        assert.equal(chooseBackgroundPath(4096, 131072), "fork");
-    });
-
-    void it("chooses summary when conversation exceeds 40% of context", () => {
-        // 250KB / 4 = 62.5K tokens / 128K = ~49% → summary
-        assert.equal(chooseBackgroundPath(250000, 128000), "summary");
-    });
-
-    void it("chooses fork at exactly 39%", () => {
-        // boundary is bytes < 1.6 * tokens. 128000 * 1.6 = 204800
-        assert.equal(chooseBackgroundPath(204000, 128000), "fork");
-    });
-
-    void it("chooses summary at exactly 41%", () => {
-        assert.equal(chooseBackgroundPath(205000, 128000), "summary");
-    });
-
-    void it("defaults to fork for empty conversation", () => {
-        assert.equal(chooseBackgroundPath(0, 32768), "fork");
-    });
-});
 
 // ─── lookupJob with recentTerminalJobs ───────────────────────────────
 
@@ -758,7 +736,7 @@ void describe("registerBackgroundJob — proc close cleanup", () => {
         // We need registerBackgroundJob exported to test this directly.
         // This test will fail at import time until the function is exported.
         const { registerBackgroundJob: _rbg } =
-            await import("../features/background.ts");
+            await import("../features/background/index.ts");
 
         const state = new TauState();
         const proc = mockProc(-77777);
@@ -809,7 +787,7 @@ void describe("registerBackgroundJob — proc close cleanup", () => {
 
     void it("marks job as failed on non-zero exit", async () => {
         const { registerBackgroundJob: _rbg } =
-            await import("../features/background.ts");
+            await import("../features/background/index.ts");
 
         const state = new TauState();
         const proc = mockProc(-77778);
@@ -855,7 +833,7 @@ void describe("registerBackgroundJob — proc close cleanup", () => {
 
     void it("resolves donePromise when process exits", async () => {
         const { registerBackgroundJob: _rbg } =
-            await import("../features/background.ts");
+            await import("../features/background/index.ts");
 
         const state = new TauState();
         const proc = mockProc(-77779);
@@ -896,7 +874,7 @@ void describe("registerBackgroundJob — proc close cleanup", () => {
 
     void it("notifies agent of completion", async () => {
         const { registerBackgroundJob: _rbg } =
-            await import("../features/background.ts");
+            await import("../features/background/index.ts");
 
         const state = new TauState();
         const proc = mockProc(-77780);
@@ -942,7 +920,7 @@ void describe("registerBackgroundJob — proc close cleanup", () => {
 
     void it("increments completedJobCount after cleanup", async () => {
         const { registerBackgroundJob: _rbg } =
-            await import("../features/background.ts");
+            await import("../features/background/index.ts");
 
         const state = new TauState();
         const proc = mockProc(-77781);

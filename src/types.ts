@@ -5,9 +5,22 @@
 import type { ChildProcess } from "node:child_process";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
+// ─── Persisted-state schema ──────────────────────────────────────────
+
+/** Bump when BackgroundJob shape changes incompatibly with old session blobs. */
+export const PERSISTED_STATE_SCHEMA_VERSION = 1;
+
 // ─── Background jobs ────────────────────────────────────────────────
 
 export type JobStatus = "running" | "completed" | "failed" | "killed";
+
+export interface TmuxJobContext {
+    session: string;
+    windowId: string;
+    exitCodeFile: string;
+    outputFile: string;
+    gitRoot: string;
+}
 
 export interface BackgroundJob {
     id: string;
@@ -25,6 +38,8 @@ export interface BackgroundJob {
     outputConsumed?: boolean;
     /** True if running in background; false if foreground (not yet backgrounded). */
     isBackgrounded: boolean;
+    /** Tmux-backed jobs attach their window context here. Plain object — survives serialisation. */
+    tmux?: TmuxJobContext;
 }
 
 export interface RunningProcess {
@@ -38,6 +53,19 @@ export interface RunningProcess {
     resolve?: (result: AgentToolResult<unknown>) => void;
     reject?: (error: Error) => void;
 }
+
+// ─── Custom message types ───────────────────────────────────────────
+
+/** customType values used in pi.sendMessage and session-entry payloads. */
+export const CUSTOM_TYPE = {
+    state: "background-tasks-state",
+    stall: "bg-stall",
+    timeout: "bg-timeout",
+    attach: "bg-attach",
+    agentResume: "agent-resume",
+    jobCompletion: "job-completion",
+} as const;
+export type CustomType = (typeof CUSTOM_TYPE)[keyof typeof CUSTOM_TYPE];
 
 // ─── Minimal context interfaces ─────────────────────────────────────
 

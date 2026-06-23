@@ -7,40 +7,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-    chooseBackgroundPath,
     extractTextFromContent,
     extractLastAssistantSummary,
     extractOriginalPrompt,
     estimateConversationBytes,
 } from "../features/agent-background.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-
-// ─── chooseBackgroundPath ────────────────────────────────────────────
-
-void describe("chooseBackgroundPath", () => {
-    void it("chooses fork when conversation is small", () => {
-        // 4KB conversation, 128K context → ~1K tokens / 128K ≈ 0.8%
-        assert.equal(chooseBackgroundPath(4096, 131072), "fork");
-    });
-
-    void it("chooses summary when conversation exceeds 40%", () => {
-        // 250KB / 4 = 62.5K tokens / 128K ≈ 49%
-        assert.equal(chooseBackgroundPath(250000, 128000), "summary");
-    });
-
-    void it("chooses fork at boundary 39%", () => {
-        // boundary = 1.6 * tokens. 128000 * 1.6 = 204800
-        assert.equal(chooseBackgroundPath(204000, 128000), "fork");
-    });
-
-    void it("chooses summary at boundary 41%", () => {
-        assert.equal(chooseBackgroundPath(205000, 128000), "summary");
-    });
-
-    void it("defaults to fork for empty conversation", () => {
-        assert.equal(chooseBackgroundPath(0, 32768), "fork");
-    });
-});
 
 // ─── extractTextFromContent ──────────────────────────────────────────
 
