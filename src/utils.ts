@@ -1,0 +1,235 @@
+/**
+ * Shared utility functions for the pi-patty-bg-tasks extension.
+ */
+
+import {
+    closeSync,
+    openSync,
+    readdirSync,
+    readSync,
+    statSync,
+    unlinkSync,
+} from "node:fs";
+import { readFile } from "node:fs/promises";
+import type { BackgroundJob, JobStatus } from "./types.ts";
+
+// ─── Configuration constants ────────────────────────────────────────
+
+/** Default timeout for foreground bash commands (15s, matching Claude Code). */
+export const DEFAULT_TIMEOUT_MS = 15_000;
+export const STALL_CHECK_INTERVAL_MS = 5_000;
+export const STALL_THRESHOLD_MS = 45_000;
+export const STALL_TAIL_BYTES = 1024;
+export const MAX_OUTPUT_PREVIEW_CHARS = 12_000;
+/** Maximum log file size before the stall watchdog kills the job. */
+export const MAX_LOG_BYTES = 100 * 1024 * 1024; // 100 MiB
+
+// ─── Process management ─────────────────────────────────────────────
+
+/** Kill an entire process group. Requires the child to have been spawned
+ *  with `detached: true` so it became a process group leader. */
+export function killProcessGroup(
+    pid: number,
+    signal: NodeJS.Signals = "SIGTERM"
+): void {
+    try {
+        process.kill(-pid, signal);
+    } catch {
+        // Process group kill failed — try just the parent.
+        try {
+            process.kill(pid, signal);
+        } catch {
+            /* already dead */
+        }
+    }
+}
+
+// ─── Job helpers ────────────────────────────────────────────────────
+
+export function generateJobId(
+    counter: number,
+    pid: number = process.pid
+): string {
+    return `job-${pid}-${counter}`;
+}
+
+export function logPathForJob(jobId: string): string {
+    return `/tmp/pi-bg-${jobId}.log`;
+}
+
+export function createJobDonePromise(job: BackgroundJob): void {
+    let resolveDone: (() => void) | undefined;
+    job.donePromise = new Promise<void>((resolve) => {
+        resolveDone = resolve;
+    });
+    job.resolveDone = resolveDone;
+}
+
+export function markJobTerminal(
+    job: BackgroundJob,
+    status: JobStatus,
+    exitCode?: number
+): void {
+    if (
+        job.status === "completed" ||
+        job.status === "failed" ||
+        job.status === "killed"
+    ) {
+        return;
+    }
+    job.status = status;
+    job.exitCode = exitCode;
+    delete job.proc;
+    if (job.resolveDone) {
+        job.resolveDone();
+        delete job.resolveDone;
+    }
+}
+
+// ─── Formatting ─────────────────────────────────────────────────────
+
+export function formatDuration(ms: number): string {
+    const totalSecs = Math.floor(ms / 1000);
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
+}
+
+export function formatJobLine(job: BackgroundJob): string {
+    const duration = formatDuration(Date.now() - job.startTime);
+    const status =
+        job.status === "running"
+            ? job.isBackgrounded
+                ? `◐ running (${duration})`
+                : `▶ running (${duration})`
+            : job.status === "completed"
+              ? "✅ completed"
+              : job.status === "failed"
+                ? "❌ failed"
+                : "🛑 killed";
+    return `${job.id}: ${job.command.slice(0, 80)} - ${status}`;
+}
+
+// ─── Output reading ─────────────────────────────────────────────────
+
+export async function readOutputTail(
+    path: string,
+    maxChars: number
+): Promise<string> {
+    try {
+        const content = await readFile(path, "utf-8");
+        if (content.length <= maxChars) return content;
+        return `...[truncated, showing last ${maxChars} chars]\n${content.slice(-maxChars)}`;
+    } catch {
+        return "(no output yet)";
+    }
+}
+
+export function readOutputTailSync(path: string, maxChars: number): string {
+    try {
+        const { size } = statSync(path);
+        if (size === 0) return "(no output yet)";
+        const fd = openSync(path, "r");
+        try {
+            const readStart = Math.max(0, size - maxChars);
+            const toRead = Math.min(size, maxChars);
+            const buf = Buffer.alloc(toRead);
+            readSync(fd, buf, 0, toRead, readStart);
+            const content = buf.toString("utf-8", 0, toRead);
+            if (size <= maxChars) return content;
+            return `...[truncated, showing last ${maxChars} chars]\n${content}`;
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        return "(no output yet)";
+    }
+}
+
+// ─── Stall detection ────────────────────────────────────────────────
+
+/** Interactive-prompt patterns at the end of output that suggest a command is
+ *  blocked waiting for keyboard input. */
+const PROMPT_PATTERNS = [
+    /\(y\/n\)/i,
+    /\[y\/n\]/i,
+    /\(yes\/no\)/i,
+    /\b(?:Do you|Would you|Shall I|Are you sure|Ready to)\b.*\? *$/i,
+    /Press (any key|Enter)/i,
+    /Continue\?/i,
+    /Overwrite\?/i,
+];
+
+export function looksLikePrompt(tail: string): boolean {
+    const lastLine = tail.trimEnd().split("\n").pop() ?? "";
+    return PROMPT_PATTERNS.some((p) => p.test(lastLine));
+}
+
+// ─── Log file cleanup ──────────────────────────────────────────────
+
+/** Remove stale /tmp/pi-bg-* log files older than 24 hours. */
+export function cleanupStaleLogs(): void {
+    const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    try {
+        const entries = readdirSync("/tmp");
+        const now = Date.now();
+        for (const entry of entries) {
+            if (!entry.startsWith("pi-bg-")) continue;
+            const filePath = `/tmp/${entry}`;
+            try {
+                const { mtimeMs } = statSync(filePath);
+                if (now - mtimeMs > MAX_AGE_MS) {
+                    unlinkSync(filePath);
+                }
+            } catch {
+                /* file already gone */
+            }
+        }
+    } catch {
+        /* /tmp not accessible */
+    }
+}
+
+// ─── Command policies ────────────────────────────────────────────────
+
+/** Commands that should not be automatically backgrounded on timeout. */
+const DISALLOWED_AUTO_BACKGROUND_COMMANDS = ["sleep"];
+
+/** Check whether a command is allowed to be auto-backgrounded. */
+export function isAutoBackgroundAllowed(command: string): boolean {
+    const base = command.trim().split(/\s+/)[0] ?? "";
+    return !DISALLOWED_AUTO_BACKGROUND_COMMANDS.includes(base);
+}
+
+/**
+ * Detect standalone or leading `sleep N` patterns that should run in
+ * foreground or use bash_bg instead. Returns the matched command or null.
+ * Blocks sleep >= 2 seconds; allows sub-2s pacing.
+ */
+export function detectBlockedSleep(command: string): string | null {
+    const first =
+        command
+            .trim()
+            .split(/&&|;|\|/)[0]
+            ?.trim() ?? "";
+    const m = /^sleep\s+(\d+(?:\.\d+)?)\s*$/.exec(first);
+    if (!m) return null;
+    const secs = parseFloat(m[1]);
+    if (secs < 2) return null;
+    return first;
+}
+
+/**
+ * Whether pi is running non-interactively. Mirrors pi's own mode decision
+ * (`parsed.print || !stdinIsTTY`): explicit `-p`/`--print`, or stdin not a TTY
+ * (piped / spawned by another process). When true there is no interactive agent
+ * loop to answer the bash tool's auto-background `job_decide` prompt, so the
+ * tool must run commands to completion instead of backgrounding on timeout.
+ */
+export function detectNonInteractive(
+    argv: readonly string[],
+    stdinIsTTY: boolean
+): boolean {
+    if (!stdinIsTTY) return true;
+    return argv.includes("-p") || argv.includes("--print");
+}
