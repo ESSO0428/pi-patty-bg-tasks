@@ -117,7 +117,7 @@ export function registerBashBgTool(
                 return {
                     content: [
                         textBlock(
-                            `Started background job ${tmuxJob.id}${p.name ? ` (${p.name})` : ""}\nCommand: ${p.command}\nOutput: ${tmuxJob.logPath}`
+                            `Command running in background with ID: ${tmuxJob.id}.${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${tmuxJob.logPath}`
                         ),
                     ],
                     details: undefined,
@@ -181,7 +181,7 @@ export function registerBashBgTool(
             return {
                 content: [
                     textBlock(
-                        `Started background job ${id}${p.name ? ` (${p.name})` : ""}\nCommand: ${p.command}\nPID: ${spawned.proc.pid}\nOutput: ${logPath}`
+                        `Command running in background with ID: ${id}.${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}`
                     ),
                 ],
                 details: undefined,

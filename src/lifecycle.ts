@@ -188,8 +188,11 @@ export function notifyFinished(args: {
     }
 
     const duration = formatDuration(Date.now() - job.startTime);
-    const emoji = job.status === "completed" ? "✅" : "❌";
-    const statusText = `Background ${job.id} ${job.status} (${duration})`;
+    const label = job.name ? `"${job.name}"` : `"${job.command.slice(0, 60)}"`;
+    const statusText =
+        job.status === "completed"
+            ? `Background bash ${label} completed (${duration})`
+            : `Background bash ${label} ${job.status} (${duration})`;
     const exitCodeText =
         job.exitCode !== undefined ? `\nExit code: ${job.exitCode}` : "";
 
@@ -202,9 +205,9 @@ export function notifyFinished(args: {
         {
             customType: EVENT.jobFinished,
             content:
-                `${emoji} ${statusText}\n` +
-                `Command: ${job.command}\n` +
-                `Output: ${job.logPath}${exitCodeText}`,
+                `${statusText}${exitCodeText}\n` +
+                `Task ID: ${job.id}\n` +
+                `Output file: ${job.logPath}`,
             display: true,
             details: {
                 jobId: job.id,
@@ -240,10 +243,10 @@ export function buildTimeoutNotice(args: {
             : `Do NOT use jobs action "attach" on this job — it will block indefinitely.`;
     return {
         content:
-            `⏰ Command timed out after ${formatDuration(args.timeoutMs)} and has been backgrounded as ${args.jobId}.\n` +
+            `Command running in background with ID: ${args.jobId}. Output is being written to: ${args.logPath}\n\n` +
             `Command: ${args.command}\n` +
             `${where}\n` +
-            `Output so far: ${args.logPath}\n\n` +
+            `Timed out after: ${formatDuration(args.timeoutMs)}\n\n` +
             `Use the job_decide tool with jobId "${args.jobId}" to decide:\n` +
             `- decision "check": inspect the output first\n` +
             `- decision "keep": let it continue running\n` +

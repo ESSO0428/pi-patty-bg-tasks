@@ -36,9 +36,8 @@ export function registerCommands(
                             customType: EVENT.background,
                             content:
                                 `Command was manually backgrounded by user. ` +
-                                `It is still running and output is being captured. ` +
-                                `You can continue working on other tasks. ` +
-                                `Use the jobs tool to check on it later.`,
+                                `Output is being captured. ` +
+                                `You can continue working — use the jobs tool to check on it later.`,
                             display: true,
                         },
                         { deliverAs: "followUp", triggerTurn: true }

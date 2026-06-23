@@ -231,10 +231,8 @@ export function registerAgentBgTool(
             return {
                 content: [
                     textBlock(
-                        `Started background agent ${id}\n` +
-                            `Prompt: ${p.prompt.slice(0, 100)}${p.prompt.length > 100 ? "…" : ""}\n` +
-                            `PID: ${proc.pid}\n` +
-                            `Output: ${logPath}`
+                        `Agent running in background with ID: ${id}. Output is being written to: ${logPath}\n` +
+                            `Prompt: ${p.prompt.slice(0, 100)}${p.prompt.length > 100 ? "…" : ""}`
                     ),
                 ],
                 details: undefined,
