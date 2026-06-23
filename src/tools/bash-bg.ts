@@ -101,7 +101,7 @@ export function registerBashBgTool(
             const shouldNotify = p.notify !== false;
             const timeoutMs = p.timeout ? p.timeout * 1_000 : undefined;
 
-            if (reg.tmuxAvailable) {
+            if (reg.tmuxAvailable && getGitRoot(ctx2.cwd)) {
                 const tmuxJob = spawnViaTmux({
                     command: p.command,
                     cwd: ctx2.cwd,
@@ -123,6 +123,7 @@ export function registerBashBgTool(
                     details: undefined,
                 };
             }
+            // git repo가 없으면 direct spawn으로 폴백.
 
             const id = nextJobId(reg);
             const logPath = logPathFor(id);
@@ -202,13 +203,7 @@ function spawnViaTmux(args: {
     timeoutMs: number | undefined;
     toolCallId: string;
 }): Job {
-    const gitRoot = getGitRoot(args.cwd);
-    if (!gitRoot) {
-        throw new Error(
-            "tmux backend requires a git repository. " +
-                "Falling back to direct process management."
-        );
-    }
+    const gitRoot = getGitRoot(args.cwd)!;
     const session = sessionNameForGitRoot(gitRoot);
     const tmuxSpawn = spawnTmuxWindow({
         command: args.command,
