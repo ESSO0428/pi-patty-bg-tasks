@@ -29,8 +29,7 @@ Background-task extension for the [pi](https://github.com/earendil-works/pi-mono
 | Command | Description |
 |---------|-------------|
 | `/bg` | Same as Ctrl+Shift+B — background and continue |
-| `/fg [job-id] [--snapshot]` | Attach to a job's output (default: most recent running) |
-| `/jobs` | Open the interactive task manager |
+| `/bg-list` | Open the interactive background task manager |
 
 ### Status Bar
 

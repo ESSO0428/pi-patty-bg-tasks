@@ -11,7 +11,7 @@ import type { BackgroundRegistry } from "./state.ts";
 import { EVENT } from "./types.ts";
 import { markKilledSilently, terminateJob } from "./lifecycle.ts";
 import { renderSidebar } from "./registry.ts";
-import { showTaskList } from "./ui.ts";
+import { openBgListPanel } from "./ui.ts";
 
 /** 모든 단축키를 등록한다. */
 export function registerShortcuts(
@@ -24,13 +24,13 @@ export function registerShortcuts(
     });
 
     pi.registerShortcut("ctrl+shift+j", {
-        description: "백그라운드 작업 목록 열기",
-        handler: async (ctx) => showTaskList(reg, ctx),
+        description: "백그라운드 작업 매니저 열기",
+        handler: async (ctx) => openBgListPanel(reg, ctx),
     });
 
     pi.registerShortcut("shift+down", {
-        description: "백그라운드 작업 목록 열기",
-        handler: async (ctx) => showTaskList(reg, ctx),
+        description: "백그라운드 작업 매니저 열기",
+        handler: async (ctx) => openBgListPanel(reg, ctx),
     });
 
     pi.registerShortcut("ctrl+shift+x", {

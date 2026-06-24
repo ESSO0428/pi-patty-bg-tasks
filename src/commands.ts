@@ -1,9 +1,8 @@
 /**
  * 슬래시 커맨드 등록.
  *
- *   - /bg: Ctrl+Shift+B와 동일
- *   - /fg [job-id] [--snapshot]: 잡 출력 attach
- *   - /jobs: 작업 목록 TUI 열기
+ *   - /bg: Ctrl+Shift+B와 동일 — 포그라운드 프로세스를 백그라운드로
+ *   - /bg-list: 인터랙티브 백그라운드 작업 매니저 열기
  */
 
 import type {
@@ -11,10 +10,9 @@ import type {
     ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import type { BackgroundRegistry } from "./state.ts";
-import { EVENT, OUTPUT_PREVIEW_CHARS } from "./types.ts";
-import { createCompletionPromise, markKilledSilently, terminateJob } from "./lifecycle.ts";
-import { findJob, readLogTail, renderSidebar } from "./registry.ts";
-import { showTaskList } from "./ui.ts";
+import { EVENT } from "./types.ts";
+import { renderSidebar } from "./registry.ts";
+import { openBgListPanel } from "./ui.ts";
 
 /** 모든 슬래시 커맨드를 등록한다. */
 export function registerCommands(
@@ -22,9 +20,8 @@ export function registerCommands(
     reg: BackgroundRegistry
 ): void {
     pi.registerCommand("bg", {
-        description: "백그라운드 bash/agent, 또는 일시정지된 agent 재개",
+        description: "포그라운드 프로세스를 백그라운드로 전환",
         handler: async (_args, ctx) => {
-            // 단순 alias: Ctrl+Shift+B 핸들러 호출.
             if (reg.activeToolCallId) {
                 const slot = reg.foreground.get(reg.activeToolCallId);
                 if (slot) {
@@ -49,68 +46,10 @@ export function registerCommands(
         },
     });
 
-    pi.registerCommand("fg", {
-        description: "/fg [job-id] [--snapshot]: 잡 출력 attach (기본: 가장 최근 실행 중)",
-        handler: async (args, ctx) => {
-            const parts = args.trim().split(/\s+/).filter(Boolean);
-            const snapshot = parts.includes("--snapshot") || parts.includes("-s");
-            const explicitId = parts.find((p) => !p.startsWith("-"));
-
-            let job = explicitId
-                ? findJob(reg, explicitId)
-                : Array.from(reg.jobs.values())
-                      .filter((j) => j.status === "running")
-                      .sort((a, b) => b.startTime - a.startTime)[0];
-
-            if (!job) {
-                ctx.ui.notify(
-                    explicitId
-                        ? `Job not found: ${explicitId}`
-                        : "No running background jobs. Usage: /fg [job-id] [--snapshot]",
-                    "warning"
-                );
-                return;
-            }
-
-            ctx.ui.setStatus(
-                "attach-flow",
-                `Attaching to ${job.name ?? job.id}${snapshot ? " (snapshot)" : ""}...`
-            );
-            try {
-                if (!snapshot && job.status === "running") {
-                    createCompletionPromise(job);
-                    await job.donePromise;
-                }
-
-                const out = readLogTail(job, OUTPUT_PREVIEW_CHARS);
-                const text =
-                    `Job: ${job.name ?? job.id}\nCommand: ${job.command}\nStatus: ${job.status}\n` +
-                    `PID: ${job.pid}\nStarted: ${new Date(job.startTime).toLocaleString()}\n` +
-                    `Log: ${job.logPath}\n\n--- OUTPUT ---\n${out}`;
-
-                pi.sendMessage(
-                    {
-                        customType: EVENT.attach,
-                        content: text,
-                        display: true,
-                        details: { jobId: job.id, logPath: job.logPath },
-                    },
-                    { deliverAs: "steer", triggerTurn: false }
-                );
-                ctx.ui.notify(
-                    `Attached output posted for ${job.name ?? job.id}`,
-                    "info"
-                );
-            } finally {
-                ctx.ui.setStatus("attach-flow", undefined);
-            }
-        },
-    });
-
-    pi.registerCommand("jobs", {
-        description: "백그라운드 작업 관리 UI 열기",
+    pi.registerCommand("bg-list", {
+        description: "인터랙티브 백그라운드 작업 매니저",
         handler: async (_args, ctx: ExtensionCommandContext) => {
-            await showTaskList(reg, ctx);
+            await openBgListPanel(reg, ctx);
         },
     });
 }
