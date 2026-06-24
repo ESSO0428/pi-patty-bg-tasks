@@ -20,7 +20,7 @@ export function registerCommands(
     reg: BackgroundRegistry
 ): void {
     pi.registerCommand("bg", {
-        description: "포그라운드 프로세스를 백그라운드로 전환",
+        description: "Background the current foreground process",
         handler: async (_args, ctx) => {
             if (reg.activeToolCallId) {
                 const slot = reg.foreground.get(reg.activeToolCallId);
@@ -47,7 +47,7 @@ export function registerCommands(
     });
 
     pi.registerCommand("bg-list", {
-        description: "인터랙티브 백그라운드 작업 매니저",
+        description: "Open the interactive background task manager",
         handler: async (_args, ctx: ExtensionCommandContext) => {
             await openBgListPanel(reg, ctx);
         },

@@ -19,22 +19,22 @@ export function registerShortcuts(
     reg: BackgroundRegistry
 ): void {
     pi.registerShortcut("ctrl+shift+b", {
-        description: "백그라운드 bash/agent, 또는 일시정지된 agent 재개",
+        description: "Background the current foreground process",
         handler: async (ctx) => handleCtrlB(reg, pi, ctx),
     });
 
     pi.registerShortcut("ctrl+shift+j", {
-        description: "백그라운드 작업 매니저 열기",
+        description: "Open background task manager",
         handler: async (ctx) => openBgListPanel(reg, ctx),
     });
 
     pi.registerShortcut("shift+down", {
-        description: "백그라운드 작업 매니저 열기",
+        description: "Open background task manager",
         handler: async (ctx) => openBgListPanel(reg, ctx),
     });
 
     pi.registerShortcut("ctrl+shift+x", {
-        description: "가장 최근 실행 중인 백그라운드 잡 종료",
+        description: "Kill the most recent running background job",
         handler: async (ctx) => handleCtrlX(reg, ctx),
     });
 }
