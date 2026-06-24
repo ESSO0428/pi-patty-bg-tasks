@@ -201,13 +201,17 @@ async function runDirect(
         isAutoBackgroundAllowed,
     });
 
+    let completed = false;
     const hintTimer = nodeSetTimeout(() => {
-        ctx.ui.notify("⏱ Ctrl+Shift+B to background", "info");
+        if (!completed) {
+            ctx.ui.notify("⏱ Ctrl+Shift+B to background", "info");
+        }
     }, QUICK_COMPLETION_MS);
     hintTimer.unref();
 
     let progress: { stop: () => void } | undefined;
     const clearAllTimers = () => {
+        completed = true;
         progress?.stop();
         clearTimer(timer);
         clearTimer(hintTimer);
@@ -376,8 +380,11 @@ async function runViaTmux(
         isAutoBackgroundAllowed,
     });
 
+    let tmuxCompleted = false;
     const hintTimer = nodeSetTimeout(() => {
-        ctx.ui.notify("⏱ Ctrl+Shift+B to background", "info");
+        if (!tmuxCompleted) {
+            ctx.ui.notify("⏱ Ctrl+Shift+B to background", "info");
+        }
     }, QUICK_COMPLETION_MS);
     hintTimer.unref();
 
@@ -386,6 +393,7 @@ async function runViaTmux(
 
     let progress: { stop: () => void } | undefined;
     const clearAllTimers = () => {
+        tmuxCompleted = true;
         progress?.stop();
         clearTimer(timer);
         clearTimer(hintTimer);
