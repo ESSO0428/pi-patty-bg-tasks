@@ -1,122 +1,164 @@
 # pi-patty-bg-tasks
 
-[한국어 README](README.ko.md)
+[한국어](README.ko.md)
 
-Background-task extension for the [pi](https://github.com/earendil-works/pi-mono) coding agent. Run long commands without blocking the conversation, spawn detached agents, and manage everything through a unified jobs interface.
+**Run long commands without blocking the agent. Auto-background after 15 seconds, manual background with Ctrl+Shift+B, and a full job manager — all matching Claude Code's background task UX.**
 
-## Features
+## Install
 
-### Tools
+```
+pi install npm:pi-patty-bg-tasks
+```
 
-| Tool | Description |
-|------|-------------|
-| **`bash`** (override) | Every bash command runs normally, but commands exceeding 15 s are auto-backgrounded. The agent is prompted to keep or kill them via `job_decide`. Press **Ctrl+Shift+B** to manually background at any time. |
-| **`bash_bg`** | Start a command in the background immediately. Supports `--name <label>` for human-readable job tracking and an optional `timeout` (seconds) that triggers the same bg-timeout flow. |
-| **`jobs`** | List, read output, kill, or attach to background jobs. Includes `search <regex>`, `cleanup`, and `stats` actions. |
-| **`job_decide`** | Keep, kill, or check a job that was auto-backgrounded by the 15 s timer. |
-| **`agent_bg`** | Spawn a separate `pi -p` process in the background with a continuity prompt derived from your current session. |
+Or from GitHub:
 
-### Keyboard Shortcuts
+```
+pi install git:github.com/patrickrho-patty/pi-patty-bg-tasks
+```
+
+Requires Pi v0.37+. tmux is optional but recommended (enables tmux-backed process isolation).
+
+## Why pi-patty-bg-tasks
+
+**No more blocked sessions.** Dev servers, test suites, builds — anything that runs longer than 15 seconds is automatically backgrounded. The agent gets notified and keeps working. You can also background any command manually at any time.
+
+**Claude Code behavior, on Pi.** The background/foreground UX — Ctrl+B to background, output capture, completion notifications, stall detection — is modeled directly on Claude Code's implementation. Same message format, same terminal-native icons, same "agent keeps working" flow.
+
+**Job manager built in.** `/bg-list` gives you an interactive task manager with localized UI (English and Korean). List, inspect output, kill, or attach to any background job.
+
+## Quick Start
+
+```
+# Agent runs a long command — auto-backgrounds after 15s
+bash({ command: "npm run build" })
+
+# Start something in the background immediately
+bash_bg({ command: "npm run dev", name: "devserver" })
+
+# Check on background jobs
+jobs({ action: "list" })
+
+# Search across all job output
+jobs({ action: "search", pattern: "error|warning" })
+
+# Spawn a background agent
+agent_bg({ prompt: "Refactor the auth module" })
+```
+
+Press **Ctrl+Shift+B** at any time to background a running command. The agent is notified and continues working immediately.
+
+## Tools
+
+### bash (override)
+
+Extends the built-in bash tool. Commands run normally, but if a command exceeds 15 seconds, it is automatically backgrounded and the agent is prompted to decide (keep, kill, or check output) via `job_decide`.
+
+| Parameter | Description |
+|-----------|-------------|
+| `command` | Shell command to run |
+| `timeout` | Custom timeout in seconds (default: 15) |
+
+### bash_bg
+
+Start a command in the background immediately — no foreground race or timeout.
+
+| Parameter | Description |
+|-----------|-------------|
+| `command` | Shell command to run |
+| `name` | Optional human-readable label for the job |
+| `timeout` | Optional timeout in seconds; triggers the same auto-background decision flow |
+| `notify` | Send completion notification (default: true) |
+
+### jobs
+
+Manage background jobs: list, read output, kill, attach, search, cleanup, or get stats.
+
+| Action | Description |
+|--------|-------------|
+| `list` | Show all running and recently completed jobs |
+| `output` | Read the log tail of a specific job |
+| `kill` | Terminate a running job |
+| `attach` | Wait for a job to complete, then return its output |
+| `search` | Regex search across all job logs |
+| `cleanup` | Purge completed/failed jobs and reclaim disk |
+| `stats` | Aggregate metrics: total started, running, completed, failed, average duration |
+
+### job_decide
+
+Respond to an auto-backgrounded command. The agent receives this prompt when the 15-second timer fires.
+
+| Parameter | Description |
+|-----------|-------------|
+| `jobId` | The backgrounded job's ID |
+| `decision` | `keep` (let it run), `kill` (terminate), or `check` (inspect output first) |
+
+### agent_bg
+
+Spawn a detached `pi -p` process with a continuity prompt derived from the current session.
+
+| Parameter | Description |
+|-----------|-------------|
+| `prompt` | Task description for the background agent |
+| `cwd` | Working directory (default: current) |
+
+## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| **Ctrl+Shift+B** | Background the current foreground process — agent keeps working immediately (matches Claude Code's Ctrl+B behavior) |
-| **Ctrl+Shift+J** / **Shift+Down** | Open the task list UI |
-| **Ctrl+Shift+X** | Kill the most recently started running job |
+| **Ctrl+Shift+B** | Background the current process — agent keeps working (matches Claude Code Ctrl+B) |
+| **Ctrl+Shift+J** | Open background task manager |
+| **Shift+Down** | Open background task manager |
+| **Ctrl+Shift+X** | Kill the most recent running job |
 
-### Slash Commands
+## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/bg` | Same as Ctrl+Shift+B — background and continue |
+| `/bg` | Background the current process (same as Ctrl+Shift+B) |
 | `/bg-list` | Open the interactive background task manager |
 
-### Status Bar
-
-A live pill-bar widget shows every running job with its duration, command preview, and background/foreground state. Completed and failed counts appear in the status line.
-
-## Architecture
+## How It Works
 
 ```
-src/
-├── index.ts          # Extension entry point — tool & event registration
-├── types.ts          # Domain types (Job, ForegroundSlot, constants)
-├── state.ts          # BackgroundRegistry — in-memory state store
-├── format.ts         # Formatting helpers (duration, status labels, textBlock)
-├── proc.ts           # Process primitives (spawn, kill, tmux, sentinel polling)
-├── registry.ts       # Job CRUD, sidebar rendering, stats
-├── lifecycle.ts      # State transitions, completion protocol, timeout, session revival
-├── monitoring.ts     # Progress polling + stall/prompt detection
-├── ui.ts             # TUI task list and job detail views
-├── shortcuts.ts      # Keyboard shortcut handlers
-├── commands.ts       # Slash command handlers
-└── tools/
-    ├── bash.ts       # bash override (foreground race → auto-background)
-    ├── bash-bg.ts    # bash_bg (immediate background)
-    ├── jobs.ts       # jobs (list/output/kill/attach/search/cleanup/stats)
-    ├── job-decide.ts # job_decide (keep/kill/check)
-    └── agent-bg.ts   # agent_bg (detached pi -p)
+Command starts
+  → Completes in <2s?     Return result immediately
+  → Still running at 15s? Auto-background → agent gets job_decide prompt
+  → User presses Ctrl+Shift+B? Background immediately → agent continues
+
+Background job running
+  → Output captured to /tmp/pi-bg-<id>.log
+  → Stall detection: if output looks like an interactive prompt, agent is warned
+  → Oversize detection: if output exceeds limit, job is killed
+  → On completion: agent gets notification with status + output path
+
+tmux available?
+  → Yes: command runs in tmux window with sentinel-file completion detection
+  → No: command runs as detached child process with direct spawn
 ```
 
-### Key Design Decisions
+## Status Bar
 
-- **tmux-first with direct-spawn fallback** — When tmux is available, commands run in tmux windows with sentinel-file-based completion detection. Falls back to detached child processes when tmux is not on PATH.
-- **Unified completion protocol** — `completeJob()` in lifecycle.ts handles the mark-terminal → notify → forget → sidebar-update sequence for all tools.
-- **Polling abstraction** — `pollExitSentinel()` in proc.ts provides a shared, timeout-guarded sentinel file poller used by both bash and bash_bg tmux backends.
-- **Session persistence** — Job state is serialized on session shutdown and revived on restart. Stale jobs (dead PIDs) are detected and cleaned up automatically.
-
-## Installation
-
-```bash
-pi package install pi-patty-bg-tasks
-```
-
-Or add to your project's pi configuration:
-
-```json
-{
-  "pi": {
-    "extensions": ["pi-patty-bg-tasks"]
-  }
-}
-```
+A live pill widget shows running jobs with duration and command preview. Completed and failed counts appear in the status line. Use Shift+Down or `/bg-list` to open the full task manager.
 
 ## Development
 
-```bash
+```
 git clone https://github.com/patrickrho-patty/pi-patty-bg-tasks.git
 cd pi-patty-bg-tasks
 pnpm install
-
-# Type-check
-pnpm check
-
-# Run tests
-pnpm test
+pnpm check    # type-check
+pnpm test     # run tests
 ```
 
-### Requirements
-
-- Node.js ≥ 22 (uses `--experimental-strip-types`)
-- pnpm ≥ 10
-- tmux (optional, recommended — enables tmux backend)
+Requires Node.js ≥ 22, pnpm ≥ 10. tmux optional.
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
-
-1. **Fork** the repository
-2. **Create a branch** for your feature or fix (`git checkout -b feat/my-feature`)
-3. **Make your changes** — ensure `pnpm check` and `pnpm test` pass
-4. **Commit** with a [conventional commit](https://www.conventionalcommits.org/) message
-5. **Open a Pull Request** against `main`
-
-### Guidelines
-
-- All code comments are written in Korean; identifiers and user-facing strings stay in English.
-- Run the full check + test suite before submitting.
-- New features should include tests in `src/__tests__/`.
-- Keep PRs focused — one feature or fix per PR.
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Ensure `pnpm check` and `pnpm test` pass
+4. Commit with [conventional commits](https://www.conventionalcommits.org/)
+5. Open a PR against `main`
 
 ## License
 
@@ -124,4 +166,4 @@ Contributions are welcome! Please follow these steps:
 
 ## Author
 
-Developed by **Patty** ([@patrickrho-patty](https://github.com/patrickrho-patty))
+**Patty** · [GitHub](https://github.com/patrickrho-patty)
