@@ -15,7 +15,7 @@ pi install npm:pi-patty-bg-tasks
 或从 GitHub 安装：
 
 ```
-pi install git:github.com/patrickrho-patty/pi-patty-bg-tasks
+pi install git:github.com/patty-io/pi-patty-bg-tasks
 ```
 
 需要 Pi v0.37+。tmux 可选但推荐（启用基于 tmux 的进程隔离）。
@@ -145,7 +145,7 @@ tmux 可用？
 ## 开发
 
 ```
-git clone https://github.com/patrickrho-patty/pi-patty-bg-tasks.git
+git clone https://github.com/patty-io/pi-patty-bg-tasks.git
 cd pi-patty-bg-tasks
 pnpm install
 pnpm check    # 类型检查
@@ -168,4 +168,4 @@ pnpm test     # 运行测试
 
 ## 作者
 
-**Patty** · [GitHub](https://github.com/patrickrho-patty)
+**Patty** · [GitHub](https://github.com/patty-io)

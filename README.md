@@ -15,7 +15,7 @@ pi install npm:pi-patty-bg-tasks
 Or from GitHub:
 
 ```
-pi install git:github.com/patrickrho-patty/pi-patty-bg-tasks
+pi install git:github.com/patty-io/pi-patty-bg-tasks
 ```
 
 Requires Pi v0.37+. tmux is optional but recommended (enables tmux-backed process isolation).
@@ -145,7 +145,7 @@ A live pill widget shows running jobs with duration and command preview. Complet
 ## Development
 
 ```
-git clone https://github.com/patrickrho-patty/pi-patty-bg-tasks.git
+git clone https://github.com/patty-io/pi-patty-bg-tasks.git
 cd pi-patty-bg-tasks
 pnpm install
 pnpm check    # type-check
@@ -168,4 +168,4 @@ Requires Node.js ≥ 22, pnpm ≥ 10. tmux optional.
 
 ## Author
 
-**Patty** · [GitHub](https://github.com/patrickrho-patty)
+**Patty** · [GitHub](https://github.com/patty-io)

@@ -201,20 +201,10 @@ async function runDirect(
         isAutoBackgroundAllowed,
     });
 
-    let completed = false;
-    const hintTimer = nodeSetTimeout(() => {
-        if (!completed) {
-            ctx.ui.notify("⏱ Ctrl+Shift+B to background", "info");
-        }
-    }, QUICK_COMPLETION_MS);
-    hintTimer.unref();
-
     let progress: { stop: () => void } | undefined;
     const clearAllTimers = () => {
-        completed = true;
         progress?.stop();
         clearTimer(timer);
-        clearTimer(hintTimer);
     };
 
     try {
@@ -380,23 +370,13 @@ async function runViaTmux(
         isAutoBackgroundAllowed,
     });
 
-    let tmuxCompleted = false;
-    const hintTimer = nodeSetTimeout(() => {
-        if (!tmuxCompleted) {
-            ctx.ui.notify("⏱ Ctrl+Shift+B to background", "info");
-        }
-    }, QUICK_COMPLETION_MS);
-    hintTimer.unref();
-
     // 종료 sentinel 폴링.
     const completionPromise = pollExitSentinel({ file: tmuxCtx.exitCodeFile, intervalMs: 200 });
 
     let progress: { stop: () => void } | undefined;
     const clearAllTimers = () => {
-        tmuxCompleted = true;
         progress?.stop();
         clearTimer(timer);
-        clearTimer(hintTimer);
     };
 
     try {

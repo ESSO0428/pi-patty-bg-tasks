@@ -15,7 +15,7 @@ pi install npm:pi-patty-bg-tasks
 또는 GitHub에서:
 
 ```
-pi install git:github.com/patrickrho-patty/pi-patty-bg-tasks
+pi install git:github.com/patty-io/pi-patty-bg-tasks
 ```
 
 Pi v0.37+ 필요. tmux는 선택 사항이지만 권장됩니다 (tmux 기반 프로세스 격리 활성화).
@@ -145,7 +145,7 @@ tmux 사용 가능?
 ## 개발
 
 ```
-git clone https://github.com/patrickrho-patty/pi-patty-bg-tasks.git
+git clone https://github.com/patty-io/pi-patty-bg-tasks.git
 cd pi-patty-bg-tasks
 pnpm install
 pnpm check    # 타입 체크
@@ -168,4 +168,4 @@ Node.js ≥ 22, pnpm ≥ 10 필요. tmux 선택 사항.
 
 ## 저자
 
-**Patty** · [GitHub](https://github.com/patrickrho-patty)
+**Patty** · [GitHub](https://github.com/patty-io)
