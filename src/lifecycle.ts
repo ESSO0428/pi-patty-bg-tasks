@@ -234,7 +234,7 @@ export function scheduleTimeout(args: {
 // ─── 완료 통지 ───────────────────────────────────────────────────────
 
 /**
- * 잡이 완료되었음을 에이전트에게 통지한다. outputConsumed가 true면
+ * 잡이 완료되었음을 UI에 가볍게 통지한다. outputConsumed가 true면
  * (예: /jobs attach가 이미 출력 소비함) 통지를 보내지 않고 정리만 한다.
  * 통지 직후 registry에서 forget()하여 메모리에서 제거한다.
  */
@@ -244,7 +244,7 @@ export function notifyFinished(args: {
     pi: ExtensionAPI;
     ctx: UiContext;
 }): void {
-    const { job, pi, ctx } = args;
+    const { job, ctx } = args;
     if (job.outputConsumed) {
         // 출력은 이미 소비됨 — 통지 없이 정리.
         // registry.forget은 호출 측에서 처리.
@@ -261,28 +261,8 @@ export function notifyFinished(args: {
         job.exitCode !== undefined ? `\nExit code: ${job.exitCode}` : "";
 
     ctx.ui.notify(
-        statusText,
+        `${statusText}${exitCodeText}`,
         job.status === "completed" ? "info" : "error"
-    );
-
-    pi.sendMessage(
-        {
-            customType: EVENT.jobFinished,
-            content:
-                `${statusText}${exitCodeText}\n` +
-                `Task ID: ${job.id}\n` +
-                `Output file: ${job.logPath}`,
-            display: true,
-            details: {
-                jobId: job.id,
-                status: job.status,
-                exitCode: job.exitCode,
-                duration,
-                command: job.command,
-                logPath: job.logPath,
-            },
-        },
-        { deliverAs: "steer" }
     );
 }
 

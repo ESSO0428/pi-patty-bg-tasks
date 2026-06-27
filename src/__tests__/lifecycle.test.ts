@@ -193,15 +193,14 @@ void describe("requestJobDecision", () => {
 });
 
 void describe("notifyFinished", () => {
-    void it("delivers job-finished as steer instead of deferring to next user turn", () => {
+    void it("uses lightweight UI notification instead of boxed job-finished custom message", () => {
         const reg = new BackgroundRegistry();
-        const sent: Array<{
-            msg: { customType?: string; content?: string };
-            options?: { deliverAs?: string };
-        }> = [];
+        const notifications: string[] = [];
+        const sent: unknown[] = [];
         const job = makeJob({
             id: "job-done",
             command: "pnpm test",
+            startTime: Date.now(),
             status: "completed",
             exitCode: 0,
         });
@@ -210,16 +209,13 @@ void describe("notifyFinished", () => {
             job,
             reg,
             pi: {
-                sendMessage: (
-                    msg: { customType?: string; content?: string },
-                    options?: { deliverAs?: string }
-                ) => sent.push({ msg, options }),
+                sendMessage: (...args: unknown[]) => sent.push(args),
             } as never,
-            ctx: makeCtx(),
+            ctx: makeCtx(notifications),
         });
 
-        assert.equal(sent[0]?.msg.customType, EVENT.jobFinished);
-        assert.equal(sent[0]?.options?.deliverAs, "steer");
+        assert.deepEqual(sent, []);
+        assert.equal(notifications[0], 'Background bash "pnpm test" completed (0s)\nExit code: 0');
     });
 });
 
