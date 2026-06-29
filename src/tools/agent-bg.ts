@@ -16,7 +16,12 @@ import type { BackgroundRegistry } from "../state.ts";
 import { MAX_CONCURRENT_JOBS, type Job } from "../types.ts";
 import { isBlankCommand, requireExistingCwd as requireCwd } from "../lifecycle.ts";
 import { add, nextJobId, logPathFor, renderSidebar } from "../registry.ts";
-import { completeJob, createJobAbort, terminateJobSilently } from "../lifecycle.ts";
+import {
+    completeJob,
+    createJobAbort,
+    ensureCompletionPromise,
+    terminateJobSilently,
+} from "../lifecycle.ts";
 import { watchStalls } from "../monitoring.ts";
 import { pollFileTail } from "../output.ts";
 import { textBlock } from "../format.ts";
@@ -152,6 +157,7 @@ export function registerAgentBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): 
                 startTime: Date.now(), status: "running", logPath,
                 proc, toolCallId, isBackgrounded: true,
             };
+            ensureCompletionPromise(job);
             add(reg, job);
 
             const jobAc = createJobAbort(reg, id);
@@ -168,7 +174,10 @@ export function registerAgentBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): 
             });
             jobAc.signal.addEventListener("abort", cancelStall, { once: true });
 
+            let finalized = false;
             const finalize = (code: number | null) => {
+                if (finalized) return;
+                finalized = true;
                 logStream.end();
                 completeJob({ job, code, reg, pi, ctx });
                 try { unlinkSync(promptFile); } catch {}

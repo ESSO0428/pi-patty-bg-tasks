@@ -13,7 +13,11 @@ import type {
     AgentToolUpdateCallback,
 } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createBashTool } from "@earendil-works/pi-coding-agent";
+import {
+    createBashToolDefinition,
+    type BashToolDetails,
+} from "@earendil-works/pi-coding-agent";
+import { unlinkSync } from "node:fs";
 import type { BackgroundRegistry } from "../state.ts";
 import {
     DEFAULT_TIMEOUT_MS,
@@ -56,7 +60,7 @@ type BashCtx = UiContext & { cwd: string };
 export function registerBashTool(
     pi: ExtensionAPI,
     reg: BackgroundRegistry,
-    originalBash: ReturnType<typeof createBashTool>
+    originalBash: ReturnType<typeof createBashToolDefinition>
 ): void {
     pi.registerTool({
         ...originalBash,
@@ -139,29 +143,48 @@ async function runForeground(args: {
     command: string;
     timeoutMs: number;
     signal: AbortSignal | undefined;
-    onUpdate: AgentToolUpdateCallback<unknown> | undefined;
+    onUpdate: AgentToolUpdateCallback<BashToolDetails | undefined> | undefined;
     ctx: BashCtx;
     reg: BackgroundRegistry;
     pi: ExtensionAPI;
-}): Promise<AgentToolResult<unknown>> {
+}): Promise<AgentToolResult<BashToolDetails | undefined>> {
     const { toolCallId, command, timeoutMs, signal, onUpdate, ctx, reg, pi } =
         args;
     const id = nextJobId(reg);
     const logPath = logPathFor(id);
 
+    // Spawn WITHOUT wiring the turn signal to a process kill. Cooperative
+    // steering aborts the turn (ctx.abort) to move this command to the
+    // background; if the turn signal killed the process group, that abort would
+    // kill the very command we just backgrounded. We manage the signal manually
+    // below and only kill on a genuine cancel (abort with no pause requested).
     const spawned = spawnWithFileOutput({
         command,
         cwd: ctx.cwd,
         logPath,
-        signal,
     });
 
     // Register the foreground slot so Ctrl+Shift+B can find this command.
+    let pauseRequested = false;
     let pauseResolve: ((reason: "manual" | "timeout") => void) | null = null;
     const pausePromise = new Promise<"manual" | "timeout">((r) => {
         pauseResolve = r;
     });
-    const requestPause = (reason: "manual" | "timeout") => pauseResolve?.(reason);
+    const requestPause = (reason: "manual" | "timeout") => {
+        pauseRequested = true;
+        pauseResolve?.(reason);
+    };
+
+    // A turn abort with no pause request is a genuine cancel (e.g. Esc) — kill
+    // the process group. A turn abort after a pause request is cooperative
+    // steering moving the command to the background — leave it running.
+    const onTurnAbort = () => {
+        if (!pauseRequested) killProcessTree(spawned.pid, "SIGTERM");
+    };
+    if (signal) {
+        if (signal.aborted) onTurnAbort();
+        else signal.addEventListener("abort", onTurnAbort);
+    }
 
     const slot: ForegroundSlot = {
         toolCallId,
@@ -183,7 +206,9 @@ async function runForeground(args: {
         toolCallId,
         isBackgrounded: false,
     };
-    add(reg, job);
+    // Foreground jobs are tracked for the sidebar / Ctrl+Shift+B but not counted
+    // as "started" until they actually move to the background (see below).
+    reg.jobs.set(id, job);
 
     // Timeout timer.
     const timeoutTimer = setTimeout(() => {
@@ -202,6 +227,7 @@ async function runForeground(args: {
     const cleanup = () => {
         progressPoller?.stop();
         clearTimeout(timeoutTimer);
+        if (signal) signal.removeEventListener("abort", onTurnAbort);
     };
 
     try {
@@ -220,6 +246,7 @@ async function runForeground(args: {
             if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
             reg.jobs.delete(id);
             const output = readLogTail(job, OUTPUT_PREVIEW_CHARS);
+            try { unlinkSync(logPath); } catch { /* best-effort */ }
             if (
                 quickResult.code !== 0 &&
                 quickResult.code !== null &&
@@ -249,8 +276,10 @@ async function runForeground(args: {
         if (race.kind === "backgrounded") {
             cleanup();
             reg.foreground.delete(toolCallId);
-            reg.activeToolCallId = null;
+            if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
             job.isBackgrounded = true;
+            // Now a real background job — count it as started.
+            reg.totalStarted++;
             ensureCompletionPromise(job);
 
             const jobAc = createJobAbort(reg, id);
@@ -294,6 +323,7 @@ async function runForeground(args: {
         if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
         reg.jobs.delete(id);
         const output = readLogTail(job, OUTPUT_PREVIEW_CHARS);
+        try { unlinkSync(logPath); } catch { /* best-effort */ }
         if (race.code !== 0 && race.code !== null && !isSignalExit(race.code)) {
             throw new Error(output || `Command exited with code ${race.code}`);
         }
@@ -313,7 +343,7 @@ function spawnBackground(args: {
     reg: BackgroundRegistry;
     pi: ExtensionAPI;
     ctx: UiContext;
-}): AgentToolResult<unknown> {
+}): AgentToolResult<BashToolDetails | undefined> {
     const id = nextJobId(args.reg);
     const logPath = logPathFor(id);
 

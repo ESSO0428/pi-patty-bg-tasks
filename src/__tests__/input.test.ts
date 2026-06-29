@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { registerInputHandlers } from "../input.ts";
 import { BackgroundRegistry } from "../state.ts";
-import { EVENT, type UiContext } from "../types.ts";
+import type { UiContext } from "../types.ts";
 
 interface ResubmittedMessage {
     text: string;
@@ -59,7 +59,10 @@ void describe("input steering (cooperative scheduler)", () => {
         assert.equal(result.action, "handled");
         assert.equal(pauseReason, "manual");
         assert.equal(abortCalled, true);
-        assert.equal(sent[0]?.customType, EVENT.background);
+        // Steering suppresses the synthetic "backgrounded, continue working"
+        // notice — the user's own resubmitted message drives the next turn,
+        // so no redundant agent message is sent.
+        assert.equal(sent.length, 0);
         assert.deepEqual(resubmitted, [
             { text: "stop and inspect the last failure", deliverAs: "followUp" },
         ]);
@@ -92,7 +95,9 @@ void describe("input steering (cooperative scheduler)", () => {
 
         assert.equal(r1.action, "handled");
         assert.equal(r2.action, "continue");
-        assert.equal(sent.length, 1);
+        // No synthetic agent messages are sent during steering (only the user's
+        // resubmitted text), and the second input is ignored (no active slot).
+        assert.equal(sent.length, 0);
         assert.equal(abortCalls, 1);
         assert.deepEqual(resubmitted, [{ text: "first", deliverAs: "followUp" }]);
     });

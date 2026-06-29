@@ -12,7 +12,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createBashTool } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { BackgroundRegistry } from "./state.ts";
 import {
     cleanupStaleRuntimeArtifacts,
@@ -46,7 +46,10 @@ export default function (pi: ExtensionAPI): void {
     const reg = new BackgroundRegistry();
 
     // ── Tool registration ─────────────────────────────────────────
-    const originalBash = createBashTool(process.cwd());
+    // Use the unwrapped tool *definition* so the override inherits Pi's native
+    // bash renderCall/renderResult (createBashTool returns a wrapped AgentTool
+    // that drops them).
+    const originalBash = createBashToolDefinition(process.cwd());
     registerBashTool(pi, reg, originalBash);
     registerBashBgTool(pi, reg);
     registerJobsTool(pi, reg);
@@ -73,11 +76,18 @@ export default function (pi: ExtensionAPI): void {
                 (e as { customType?: string }).customType === EVENT.state
         ) as Array<{ type: "custom"; customType: string; data: unknown }>;
 
-        for (const entry of stateEntries) {
-            const data = entry.data as PersistedState;
-            if (data.schemaVersion !== PERSISTED_STATE_SCHEMA_VERSION) continue;
-            if (data.jobs) {
-                for (const [id, job] of data.jobs) {
+        // Restore from the latest valid snapshot only. session_shutdown appends
+        // a fresh snapshot every time; replaying them all (last-write-wins with
+        // side effects) can resurrect phantom "running" jobs that a newer
+        // snapshot already dropped, and double-counts terminal jobs.
+        const latest = [...stateEntries]
+            .reverse()
+            .map((e) => e.data as PersistedState)
+            .find((d) => d.schemaVersion === PERSISTED_STATE_SCHEMA_VERSION);
+
+        if (latest) {
+            if (latest.jobs) {
+                for (const [id, job] of latest.jobs) {
                     reviveAndValidate(reg, job);
                     if (job.status !== "running") {
                         // Not alive — fold into the counter and drop from the map.
@@ -87,8 +97,8 @@ export default function (pi: ExtensionAPI): void {
                     }
                 }
             }
-            if (typeof data.jobCounter === "number") {
-                reg.counter = Math.max(reg.counter, data.jobCounter);
+            if (typeof latest.jobCounter === "number") {
+                reg.counter = Math.max(reg.counter, latest.jobCounter);
             }
         }
 

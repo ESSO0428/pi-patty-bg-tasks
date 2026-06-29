@@ -13,7 +13,9 @@ export function registerInputHandlers(pi: ExtensionAPI, reg: BackgroundRegistry)
         if (event.source === "extension") return { action: "continue" };
 
         const text = event.text;
-        const bg = backgroundActiveForeground(reg, pi, ctx as UiContext);
+        const bg = backgroundActiveForeground(reg, pi, ctx as UiContext, {
+            notifyAgent: false,
+        });
         if (!bg) return { action: "continue" };
 
         // Abort the current turn so the bash tool returns the "backgrounded" result.

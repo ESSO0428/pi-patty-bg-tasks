@@ -72,7 +72,7 @@ export type EventName = (typeof EVENT)[keyof typeof EVENT];
 // --- UI context ---
 export interface UiContext {
     ui: {
-        notify(message: string, level?: "info" | "success" | "warning" | "error"): void;
+        notify(message: string, level?: "info" | "warning" | "error"): void;
         setWidget(name: string, content: string[] | undefined): void;
         setStatus(name: string, content: unknown): void;
         theme: { fg(colour: string, text: string): string };

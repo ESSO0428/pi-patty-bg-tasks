@@ -161,7 +161,8 @@ export function terminateJob(job: Job): void {
 export function backgroundActiveForeground(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
-    ctx: UiContext
+    ctx: UiContext,
+    options?: { notifyAgent?: boolean }
 ): boolean {
     if (!reg.activeToolCallId) return false;
     const toolCallId = reg.activeToolCallId;
@@ -173,6 +174,13 @@ export function backgroundActiveForeground(
     if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
     renderSidebar(reg, ctx);
     ctx.ui.notify("▶ Backgrounded — continuing.", "info");
+
+    // Cooperative steering (input.ts) delivers the user's own message as the
+    // follow-up, so it suppresses this synthetic notice to avoid a duplicate
+    // agent message and an extra turn. Ctrl+Shift+B / /bg have no user text and
+    // keep it.
+    if (options?.notifyAgent === false) return true;
+
     pi.sendMessage(
         {
             customType: EVENT.background,
