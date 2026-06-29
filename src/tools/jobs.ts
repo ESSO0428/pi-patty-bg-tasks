@@ -216,10 +216,12 @@ async function attachAction(
         const poller = pollFileTail(job.logPath, (text) => {
             onUpdate?.({ content: [textBlock(text)], details: undefined });
         });
+        let onAbort: (() => void) | undefined;
         try {
             if (signal && !signal.aborted) {
                 const abortPromise = new Promise<void>((resolve) => {
-                    signal.addEventListener("abort", () => resolve(), { once: true });
+                    onAbort = resolve;
+                    signal.addEventListener("abort", onAbort, { once: true });
                 });
                 await Promise.race([job.donePromise, abortPromise]);
             } else {
@@ -227,6 +229,7 @@ async function attachAction(
             }
         } finally {
             poller.stop();
+            if (signal && onAbort) signal.removeEventListener("abort", onAbort);
         }
 
         if (job.status === "running") {

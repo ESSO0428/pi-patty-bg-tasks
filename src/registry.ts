@@ -182,7 +182,15 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
 /** Start the live-duration ticker if not already running. */
 function ensureSidebarTicker(reg: BackgroundRegistry, ctx: UiContext): void {
     if (reg.sidebarTimer) return;
-    const t = setInterval(() => renderSidebar(reg, ctx), 1000);
+    const t = setInterval(() => {
+        try {
+            renderSidebar(reg, ctx);
+        } catch {
+            // The captured ctx went stale (session reload/fork/switch) — stop
+            // ticking rather than throw an uncaught exception in the interval.
+            stopSidebarTicker(reg);
+        }
+    }, 1000);
     t.unref();
     reg.sidebarTimer = t;
 }
