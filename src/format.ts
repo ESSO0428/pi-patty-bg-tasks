@@ -18,7 +18,7 @@ export function statusLabel(job: Job, duration?: string): string {
     const dur = duration ?? formatDuration(Date.now() - job.startTime);
     switch (job.status) {
         case "running":
-            return job.isBackgrounded ? `▶ running (${dur})` : `▶ running (${dur})`;
+            return job.isBackgrounded ? `▶ bg (${dur})` : `▶ fg (${dur})`;
         case "completed":
             return "✓ completed";
         case "failed":
@@ -44,7 +44,7 @@ export function truncateTail(content: string, maxChars: number): string {
     return `...[truncated, showing last ${maxChars} chars]\n${content.slice(-maxChars)}`;
 }
 
-/** 텍스트 콘텐츠 블록 빌더 — 모든 툴에서 공유. */
+/** Text content block builder — shared across all tools. */
 export function textBlock(s: string): { type: "text"; text: string } {
     return { type: "text" as const, text: s };
 }

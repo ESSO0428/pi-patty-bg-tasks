@@ -1,8 +1,8 @@
 /**
- * 포맷 헬퍼 단위 테스트.
+ * Unit tests for the formatting helpers.
  */
 
-import { describe, it } from "node:test";
+import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
 import {
     formatDuration,
@@ -27,15 +27,15 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 }
 
 void describe("formatDuration", () => {
-    void it("0초 미만은 0s", () => {
+    void it("sub-second rounds to 0s", () => {
         assert.equal(formatDuration(0), "0s");
         assert.equal(formatDuration(999), "0s");
     });
-    void it("초 단위만", () => {
+    void it("seconds only", () => {
         assert.equal(formatDuration(1_000), "1s");
         assert.equal(formatDuration(45_000), "45s");
     });
-    void it("분 + 초", () => {
+    void it("minutes + seconds", () => {
         assert.equal(formatDuration(60_000), "1m0s");
         assert.equal(formatDuration(125_000), "2m5s");
         assert.equal(formatDuration(3_600_000), "60m0s");
@@ -43,10 +43,10 @@ void describe("formatDuration", () => {
 });
 
 void describe("truncateTail", () => {
-    void it("maxChars 이하면 그대로", () => {
+    void it("returns as-is when within maxChars", () => {
         assert.equal(truncateTail("short", 100), "short");
     });
-    void it("maxChars 초과면 마커 + 꼬리", () => {
+    void it("adds marker + tail when over maxChars", () => {
         const out = truncateTail("x".repeat(200), 50);
         assert.match(out, /\.\.\.\[truncated, showing last 50 chars\]/);
         assert.ok(out.endsWith("x".repeat(50)));
@@ -57,13 +57,13 @@ void describe("statusLabel", () => {
     void it("running + backgrounded", () => {
         assert.equal(
             statusLabel(makeJob({ status: "running", isBackgrounded: true })),
-            "▶ running (0s)"
+            "▶ bg (0s)"
         );
     });
     void it("running + foreground", () => {
         assert.equal(
             statusLabel(makeJob({ status: "running", isBackgrounded: false })),
-            "▶ running (0s)"
+            "▶ fg (0s)"
         );
     });
     void it("completed", () => {
@@ -77,8 +77,16 @@ void describe("statusLabel", () => {
     });
 });
 
+test("statusLabel distinguishes foreground and background", () => {
+    const base = { id: "j1", command: "ls", pid: 1, startTime: Date.now(), logPath: "/tmp/x", toolCallId: "t1" };
+    const fg = { ...base, status: "running" as const, isBackgrounded: false };
+    const bg = { ...base, status: "running" as const, isBackgrounded: true };
+    assert.ok(statusLabel(fg).includes("fg"));
+    assert.ok(statusLabel(bg).includes("bg"));
+});
+
 void describe("formatJobLine", () => {
-    void it("running 잡은 duration 표시", () => {
+    void it("running jobs show duration", () => {
         const job: Job = {
             id: "job-1-1",
             command: "sleep 60",
@@ -89,9 +97,9 @@ void describe("formatJobLine", () => {
             toolCallId: "tc-1",
             isBackgrounded: true,
         };
-        assert.match(formatJobLine(job), /^job-1-1: sleep 60 - ▶ running \(5s\) \(5s\)$/);
+        assert.match(formatJobLine(job), /^job-1-1: sleep 60 - ▶ bg \(5s\) \(5s\)$/);
     });
-    void it("이름 있는 잡은 이름 우선", () => {
+    void it("named jobs show the name first", () => {
         const job: Job = {
             id: "job-1-2",
             name: "build",
