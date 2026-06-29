@@ -16,7 +16,7 @@
   <img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
-**构建还在跑,代理不该干等着。** 这就是 Claude Code 的后台任务体验,如今搬到了 Pi 上:扔出一条长命令,它不会卡住整个会话,而是悄悄溜到后台,代理则继续埋头干活。120 秒自动转后台、Ctrl+Shift+B 一键秒转、输出全程捕获、卡顿自动检测,外加一个功能齐全的作业管理器 —— 全都打包进一个扩展里。
+**构建还在跑,代理不该干等着。** 这就是 Claude Code 的后台任务体验,如今搬到了 Pi 上:扔出一条长命令,它不会卡住整个会话,而是悄悄溜到后台,代理则继续埋头干活。120 秒自动转后台、Ctrl+B 一键秒转、输出全程捕获、卡顿自动检测,外加一个功能齐全的作业管理器 —— 全都打包进一个扩展里。
 
 ## 安装
 
@@ -62,7 +62,7 @@ jobs({ action: "search", pattern: "error|warning" })
 agent_bg({ prompt: "重构 auth 模块" })
 ```
 
-命令在跑的时候,随手按下 **Ctrl+Shift+B**,它就地转入后台。代理收到通知,你手还没从键盘上松开,它已经回去接着干了。
+命令在跑的时候,随手按下 **Ctrl+B**,它就地转入后台 —— 命令跑过几秒后,输入框下方会浮现一行淡淡的 `(ctrl+b to run in background)` 提示。代理收到通知,你手还没从键盘上松开,它已经回去接着干了。
 
 ## 工具
 
@@ -125,7 +125,8 @@ agent_bg({ prompt: "重构 auth 模块" })
 
 | 快捷键 | 操作 |
 |-------|------|
-| **Ctrl+Shift+B** | 把当前进程转后台 —— 代理继续干活(对应 Claude Code 的 Ctrl+B) |
+| **Ctrl+B** | 把正在运行的前台命令转后台 —— 代理继续干活(对应 Claude Code)。在 tmux 里要按两下(tmux 占用了 Ctrl+B)。 |
+| **Ctrl+Shift+B** | 等同 Ctrl+B(别名) |
 | **Ctrl+Shift+J** | 打开后台作业管理器 |
 | **Shift+Down** | 打开后台作业管理器 |
 | **Ctrl+Shift+X** | 终止最近一个运行中的作业 |
@@ -136,7 +137,7 @@ agent_bg({ prompt: "重构 auth 模块" })
 
 | 命令 | 说明 |
 |------|------|
-| `/bg` | 把当前进程转后台(等同 Ctrl+Shift+B) |
+| `/bg` | 把当前进程转后台(等同 Ctrl+B) |
 | `/bg-list` | 打开交互式后台作业管理器 |
 | `/bg-version` | 显示已加载扩展的版本/路径,方便排查重载问题 |
 
@@ -148,7 +149,7 @@ agent_bg({ prompt: "重构 auth 模块" })
 命令启动(直接 Node.js child_process.spawn)
   → 2 秒内完成?          立即返回结果
   → 120 秒还在跑?        自动转后台 → 代理收到 job_decide 提示
-  → 你按了 Ctrl+Shift+B?  立即转后台 → 代理继续
+  → 你按了 Ctrl+B?        立即转后台 → 代理继续
 
 后台作业运行中
   → 输出经由文件描述符捕获到 /tmp/pi-bg/<id>.log

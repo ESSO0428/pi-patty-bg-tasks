@@ -1,9 +1,9 @@
 /**
- * 키보드 단축키 등록.
+ * Keyboard shortcut registration.
  *
- *   - Ctrl+Shift+B: 포그라운드 bash/agent를 백그라운드로 전환 (또는 재개)
- *   - Ctrl+J / Shift+Down: 작업 목록 TUI 열기
- *   - Ctrl+Shift+X: 가장 최근 실행 중인 잡 종료
+ *   - Ctrl+B (and Ctrl+Shift+B alias): move the foreground bash to background
+ *   - Ctrl+Shift+J / Shift+Down: open the background task manager
+ *   - Ctrl+Shift+X: kill the most recent running job
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,13 +15,22 @@ import {
 import { renderSidebar } from "./registry.ts";
 import { openBgListPanel } from "./ui.ts";
 
-/** 모든 단축키를 등록한다. */
+/** Register all shortcuts. */
 export function registerShortcuts(
     pi: ExtensionAPI,
     reg: BackgroundRegistry
 ): void {
-    pi.registerShortcut("ctrl+shift+b", {
+    // Primary background shortcut — Ctrl+B, matching Claude Code. Inside a tmux
+    // session Ctrl+B is tmux's prefix key and must be pressed twice; the live
+    // hint shown while a command runs says so.
+    pi.registerShortcut("ctrl+b", {
         description: "Background the current foreground process",
+        handler: async (ctx) => handleCtrlB(reg, pi, ctx),
+    });
+
+    // Alias for muscle memory and for when Ctrl+B is captured by tmux.
+    pi.registerShortcut("ctrl+shift+b", {
+        description: "Background the current foreground process (alias for Ctrl+B)",
         handler: async (ctx) => handleCtrlB(reg, pi, ctx),
     });
 
@@ -42,9 +51,9 @@ export function registerShortcuts(
 }
 
 /**
- * Ctrl+Shift+B 핸들러:
- *   - 포그라운드 bash가 진행 중이면 pausePromise를 해소해 백그라운딩.
- *   - 에이전트는 계속 작업한다 (pause 없음).
+ * Ctrl+B / Ctrl+Shift+B handler:
+ *   - if a foreground bash is in flight, resolve its pause promise to background
+ *     it; the agent keeps working (no pause).
  */
 async function handleCtrlB(
     reg: BackgroundRegistry,
@@ -55,7 +64,7 @@ async function handleCtrlB(
     ctx.ui.notify("No running process to background.", "warning");
 }
 
-/** Ctrl+Shift+X: 가장 최근 실행 중인 잡 종료. */
+/** Ctrl+Shift+X: kill the most recent running job. */
 async function handleCtrlX(
     reg: BackgroundRegistry,
     ctx: Parameters<NonNullable<Parameters<ExtensionAPI["registerShortcut"]>[1]["handler"]>>[0]

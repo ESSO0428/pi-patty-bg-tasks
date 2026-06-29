@@ -29,6 +29,7 @@ import {
 } from "../types.ts";
 import { spawnWithFileOutput, killProcessTree } from "../spawn.ts";
 import { pollFileTail } from "../output.ts";
+import { showBackgroundHint, clearBackgroundHint } from "../hint.ts";
 import {
     add,
     markStarted,
@@ -238,10 +239,12 @@ async function runForeground(args: {
             return finishForeground(quickResult.code);
         }
 
-        // Still running — start progress polling.
+        // Still running past the quick window — start progress polling and show
+        // the "(ctrl+b to run in background)" hint, like Claude Code.
         progressPoller = pollFileTail(logPath, (text) => {
             onUpdate?.({ content: [{ type: "text", text }], details: undefined });
         });
+        showBackgroundHint(ctx);
 
         // Race: completion vs backgrounding.
         const race = await Promise.race<
@@ -278,6 +281,7 @@ async function runForeground(args: {
     } finally {
         // Single teardown for every exit path (return, throw, background hand-off).
         cleanup();
+        clearBackgroundHint(ctx);
         reg.foreground.delete(toolCallId);
         if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
         if (!handedToBackground) {

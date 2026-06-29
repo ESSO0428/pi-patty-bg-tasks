@@ -16,7 +16,7 @@
   <img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
-**Your agent shouldn't twiddle its thumbs while the build runs.** This is Claude Code's background-task experience, brought to Pi: kick off a long command, and instead of blocking the whole session, it slips into the background while the agent keeps working. Auto-background after 120 seconds, instant background with Ctrl+Shift+B, output capture, stall detection, and a full job manager — all in one extension.
+**Your agent shouldn't twiddle its thumbs while the build runs.** This is Claude Code's background-task experience, brought to Pi: kick off a long command, and instead of blocking the whole session, it slips into the background while the agent keeps working. Auto-background after 120 seconds, instant background with Ctrl+B, output capture, stall detection, and a full job manager — all in one extension.
 
 ## Install
 
@@ -62,7 +62,7 @@ jobs({ action: "search", pattern: "error|warning" })
 agent_bg({ prompt: "Refactor the auth module" })
 ```
 
-Hit **Ctrl+Shift+B** whenever a command is running to background it on the spot. The agent gets notified and is back to work before you've let go of the keys.
+Hit **Ctrl+B** whenever a command is running to background it on the spot — a dim `(ctrl+b to run in background)` hint appears under your input once the command has been going a couple of seconds. The agent gets notified and is back to work before you've let go of the keys.
 
 ## Tools
 
@@ -125,7 +125,8 @@ Keep your hands on the keyboard.
 
 | Shortcut | Action |
 |----------|--------|
-| **Ctrl+Shift+B** | Background the current process — agent keeps working (matches Claude Code's Ctrl+B) |
+| **Ctrl+B** | Background the running foreground command — agent keeps working (matches Claude Code). Inside tmux, press it twice (tmux owns Ctrl+B). |
+| **Ctrl+Shift+B** | Same as Ctrl+B (alias) |
 | **Ctrl+Shift+J** | Open the background task manager |
 | **Shift+Down** | Open the background task manager |
 | **Ctrl+Shift+X** | Kill the most recent running job |
@@ -136,7 +137,7 @@ Prefer slashes? Same powers, different door.
 
 | Command | Description |
 |---------|-------------|
-| `/bg` | Background the current process (same as Ctrl+Shift+B) |
+| `/bg` | Background the current process (same as Ctrl+B) |
 | `/bg-list` | Open the interactive background task manager |
 | `/bg-version` | Show the loaded extension version/path for reload diagnostics |
 
@@ -148,7 +149,7 @@ No magic, just a tidy state machine:
 Command starts (direct Node.js child_process.spawn)
   → Done in <2s?           Return the result immediately
   → Still running at 120s? Auto-background → agent gets a job_decide prompt
-  → You press Ctrl+Shift+B? Background immediately → agent continues
+  → You press Ctrl+B?       Background immediately → agent continues
 
 Background job running
   → Output captured to /tmp/pi-bg/<id>.log via file descriptor

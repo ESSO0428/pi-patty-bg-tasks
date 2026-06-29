@@ -72,7 +72,11 @@ export type EventName = (typeof EVENT)[keyof typeof EVENT];
 export interface UiContext {
     ui: {
         notify(message: string, level?: "info" | "warning" | "error"): void;
-        setWidget(name: string, content: string[] | undefined): void;
+        setWidget(
+            name: string,
+            content: string[] | undefined,
+            options?: { placement?: "aboveEditor" | "belowEditor" }
+        ): void;
         setStatus(name: string, content: unknown): void;
         theme: { fg(colour: string, text: string): string };
         select(title: string, options: string[]): Promise<string | undefined>;
