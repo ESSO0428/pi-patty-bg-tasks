@@ -2,8 +2,8 @@
  * Streaming log search service.
  *
  * The jobs tool owns parameter parsing and result formatting; this module owns
- * full-log scanning, match counting, bounded display-hit retention, and tmux
- * fallback mechanics.
+ * full-log scanning, match counting, bounded display-hit retention, and the
+ * tail fallback used when the log file cannot be streamed line-by-line.
  */
 
 import { createReadStream } from "node:fs";
@@ -43,7 +43,7 @@ export async function searchLogs(args: {
             maxHitsPerJob: args.maxHitsPerJob,
             maxLineChars,
         });
-        if (!scanned && job.tmux) {
+        if (!scanned) {
             scanText(
                 job,
                 args.pattern,
@@ -100,7 +100,7 @@ function scanText(
         re.lastIndex = 0;
         if (re.test(lines[i])) {
             recordSearchHit(groups, job, {
-                path: `${job.logPath} (tmux pane tail)`,
+                path: `${job.logPath} (log tail)`,
                 line: i + 1,
                 text: truncateLine(lines[i], options.maxLineChars),
             }, options.maxHitsPerJob);

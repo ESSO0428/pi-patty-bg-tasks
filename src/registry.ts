@@ -6,8 +6,8 @@
  * pill bar (`renderSidebar`) and aggregates stats (`getStats`).
  */
 
-import { closeSync, openSync, readSync, statSync, unlinkSync, readFileSync } from "node:fs";
-import { formatDuration, truncateTail } from "./format.ts";
+import { statSync, unlinkSync } from "node:fs";
+import { formatDuration } from "./format.ts";
 import {
     PREVIEW_CHARS,
     RECENT_TERMINAL_KEEP,
@@ -15,8 +15,7 @@ import {
     type UiContext,
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
-import { capturePane } from "./proc.ts";
-import { TMUX_PANE_LINES } from "./types.ts";
+import { readBoundedTail } from "./output.ts";
 
 // ─── ID 생성 ────────────────────────────────────────────────────────────────────────────────
 
@@ -201,30 +200,7 @@ export function isRunning(job: Job): boolean {
     return job.status === "running";
 }
 
-/** 잡의 로그 파일 끝부분만 읽는다. 대용량 파일에서도 O(maxChars)만 읽는다. */
+/** Read only the tail of a job's log file — O(maxChars) even for large files. */
 export function readLogTail(job: Job, maxChars: number): string {
-    const fileTail = readBoundedTail(job.logPath, maxChars);
-    if (fileTail && fileTail.length > 0) return fileTail;
-    if (job.tmux) {
-        return truncateTail(capturePane(job.tmux.windowId, TMUX_PANE_LINES), maxChars);
-    }
-    return "(no output yet)";
-}
-
-function readBoundedTail(logPath: string, maxChars: number): string | undefined {
-    try {
-        const { size } = statSync(logPath);
-        if (size <= maxChars) return readFileSync(logPath, "utf-8");
-        // 테일만 읽기 — 전체 파일을 메모리에 올리지 않는다.
-        const fd = openSync(logPath, "r");
-        try {
-            const buf = Buffer.alloc(maxChars);
-            readSync(fd, buf, 0, maxChars, Math.max(0, size - maxChars));
-            return `...[truncated, showing last ${maxChars} chars]\n${buf.toString("utf-8")}`;
-        } finally {
-            closeSync(fd);
-        }
-    } catch {
-        return undefined;
-    }
+    return readBoundedTail(job.logPath, maxChars);
 }
