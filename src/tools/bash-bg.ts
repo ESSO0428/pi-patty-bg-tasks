@@ -74,10 +74,7 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
                         renderSidebar(reg, ctx2);
                         return;
                     }
-                    requestJobDecision({
-                        reg, pi, job, timeoutMs: p.timeout! * 1000,
-                        location: { kind: "pid", pid: spawned.pid },
-                    });
+                    requestJobDecision({ reg, pi, ctx: ctx2, job, timeoutMs: p.timeout! * 1000 });
                 }, p.timeout * 1000);
                 (timer as NodeJS.Timeout).unref();
                 jobAc.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });

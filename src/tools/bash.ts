@@ -260,13 +260,7 @@ async function runForeground(args: {
             startBackgroundJob({ reg, pi, ctx, job, exit: spawned.exit });
 
             if (race.reason === "timeout") {
-                requestJobDecision({
-                    reg,
-                    pi,
-                    job,
-                    timeoutMs,
-                    location: { kind: "pid", pid: spawned.pid },
-                });
+                requestJobDecision({ reg, pi, ctx, job, timeoutMs });
             }
 
             return {

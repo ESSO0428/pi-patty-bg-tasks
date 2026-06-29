@@ -272,25 +272,23 @@ export function notifyFinished(args: {
 
     const duration = formatDuration(Date.now() - job.startTime);
     const label = job.name ? `"${job.name}"` : `"${job.command.slice(0, 60)}"`;
+    const exitText =
+        job.exitCode !== undefined && job.exitCode !== 0
+            ? ` (exit ${job.exitCode})`
+            : "";
     const statusText =
         job.status === "completed"
-            ? `Background bash ${label} completed (${duration})`
-            : `Background bash ${label} ${job.status} (${duration})`;
-    const exitCodeText =
-        job.exitCode !== undefined ? `\nExit code: ${job.exitCode}` : "";
+            ? `Background bash ${label} completed in ${duration}`
+            : `Background bash ${label} ${job.status} in ${duration}${exitText}`;
 
-    ctx.ui.notify(
-        statusText,
-        job.status === "completed" ? "info" : "error"
-    );
+    ctx.ui.notify(statusText, job.status === "completed" ? "info" : "error");
 
+    // Keep the agent in the loop (Claude Code parity) but compact: a single
+    // line delivered as a non-triggering follow-up, not a boxed block.
     pi.sendMessage(
         {
             customType: EVENT.jobFinished,
-            content:
-                `${statusText}${exitCodeText}\n` +
-                `Task ID: ${job.id}\n` +
-                `Output file: ${job.logPath}`,
+            content: `${statusText} · ${job.id} · output: ${job.logPath}`,
             display: true,
             details: {
                 jobId: job.id,
@@ -306,60 +304,35 @@ export function notifyFinished(args: {
 }
 
 /**
- * Build the follow-up message that informs the agent a command was
- * backgrounded after a timeout. Keeps a single message shape for all backends.
+ * Record a timeout decision request: a compact agent follow-up (so the agent
+ * can decide via job_decide) plus a lightweight UI toast for the human. Keeps
+ * the agent informed without the old boxed prompt.
  */
-export function buildTimeoutNotice(args: {
-    jobId: string;
-    command: string;
-    logPath: string;
-    timeoutMs: number;
-    location: { kind: "pid"; pid: number };
-}): { content: string; details: Record<string, unknown> } {
-    const where = `PID: ${args.location.pid}`;
-    const attachHint =
-        `Do NOT use jobs action "attach" on this job — it will block indefinitely.`;
-    return {
-        content:
-            `Command running in background with ID: ${args.jobId}. Output is being written to: ${args.logPath}\n\n` +
-            `Command: ${args.command}\n` +
-            `${where}\n` +
-            `Timed out after: ${formatDuration(args.timeoutMs)}\n\n` +
-            `Use the job_decide tool with jobId "${args.jobId}" to decide:\n` +
-            `- decision "check": inspect the output first\n` +
-            `- decision "keep": let it continue running\n` +
-            `- decision "kill": terminate it\n\n` +
-            attachHint,
-        details: {
-            jobId: args.jobId,
-            logPath: args.logPath,
-            command: args.command,
-        },
-    };
-}
-
-/** Record a timeout decision request and deliver it as an agent follow-up. */
 export function requestJobDecision(args: {
     reg: BackgroundRegistry;
     pi: ExtensionAPI;
+    ctx: UiContext;
     job: Job;
     timeoutMs: number;
-    location: { kind: "pid"; pid: number };
 }): void {
     args.reg.pendingDecisionJobId = args.job.id;
-    const notice = buildTimeoutNotice({
-        jobId: args.job.id,
-        command: args.job.command,
-        logPath: args.job.logPath,
-        timeoutMs: args.timeoutMs,
-        location: args.location,
-    });
+    const label = args.job.name ? `"${args.job.name}"` : args.job.id;
+    const elapsed = formatDuration(args.timeoutMs);
+
+    args.ctx.ui.notify(`Backgrounded ${label} after ${elapsed}; still running.`, "info");
+
     args.pi.sendMessage(
         {
             customType: EVENT.timeout,
-            content: notice.content,
+            content:
+                `Command ${args.job.id} still running after ${elapsed} — moved to background. ` +
+                `Decide with job_decide (keep / kill / check). Output: ${args.job.logPath}`,
             display: true,
-            details: notice.details,
+            details: {
+                jobId: args.job.id,
+                logPath: args.job.logPath,
+                command: args.job.command,
+            },
         },
         { deliverAs: "followUp", triggerTurn: true }
     );

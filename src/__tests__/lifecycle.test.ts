@@ -207,9 +207,9 @@ void describe("requestJobDecision", () => {
         requestJobDecision({
             reg,
             pi: { sendMessage: (msg: { customType?: string; details?: { jobId?: string } }) => sent.push(msg) } as never,
+            ctx: { ui: { notify: () => {} } } as never,
             job,
             timeoutMs: 15_000,
-            location: { kind: "pid", pid: 123 },
         });
 
         assert.equal(reg.pendingDecisionJobId, "job-timeout");
