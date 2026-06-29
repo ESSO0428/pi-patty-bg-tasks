@@ -209,8 +209,8 @@ async function runForeground(args: {
         const quickResult = await Promise.race<{ code: number | null } | null>([
             spawned.exit.then((c) => ({ code: c })),
             new Promise<null>((r) => {
-                const t = setTimeout(r, QUICK_COMPLETION_MS);
-                (t as NodeJS.Timeout).unref();
+                const t = setTimeout(() => r(null), QUICK_COMPLETION_MS);
+                t.unref();
             }),
         ]);
 
