@@ -78,27 +78,52 @@ get a **distinct sidebar pill** so they read differently from shell jobs.
   event emitter, registers the job with `kind: "monitor"`, and returns the start message.
   Registered in `src/index.ts` next to the other five tools.
 
-- **`src/monitor-follow.ts`** — the one genuinely new mechanic: a **line-accurate tail
-  follower**. Tracks a byte offset into the stdout events log, reads only *complete* newly
-  appended lines (holds a partial trailing line until its newline arrives), batches lines
-  that arrive within **200 ms** into one event, and invokes an `onEvent(lines: string[])`
-  callback. Returns a `stop()` handle. This is separate from `pollFileTail` in
-  `output.ts`, which reads a bounded 4 KB tail and dedups by content — lossy under bursts
-  and not line-accurate, so it cannot back Monitor. `pollFileTail` stays as-is for bg
-  progress streaming.
+- **`src/monitor-follow.ts`** — the one genuinely new mechanic and the **single emitter
+  path for both sources**: a **line-accurate tail follower**. Starts at byte offset 0 of
+  the `<jobId>.log` (so all output from a freshly spawned command is captured), tracks the
+  offset forward, reads only *complete* newly appended lines (holds a partial trailing line
+  until its newline arrives), batches lines that arrive within **200 ms** into one event,
+  and invokes an `onEvent(lines: string[])` callback. Returns a `stop()` handle. This is
+  separate from `pollFileTail` in `output.ts`, which reads a bounded 4 KB tail and dedups
+  by content — lossy under bursts and not line-accurate, so it cannot back Monitor.
+  `pollFileTail` stays as-is for bg progress streaming.
 
 - **`src/monitor-ws.ts`** — WebSocket source. Feature-detects `globalThis.WebSocket`
-  (stable in Node 22+). Each text frame → one event; binary frame → a placeholder line
-  `[binary frame, N bytes]`; socket close ends the watch with the close code surfaced;
-  errors surfaced before close. If `globalThis.WebSocket` is absent on the runtime, the
-  `ws` source fails fast with an actionable error pointing to a `command`-based
-  alternative (`websocat`/`wscat`). See Compatibility.
+  (stable in Node 22+). Opens the socket and **appends each event as a line to the same
+  `<jobId>.log`** the follower reads — so ws and command monitors share one emitter path
+  and the existing jobs-list / attach / Read surface works unchanged. Each text frame →
+  one line; binary frame → a placeholder line `[binary frame, N bytes]`; socket close
+  appends a terminal line with the close code and stops the follower; errors are surfaced
+  before close. If `globalThis.WebSocket` is absent on the runtime, the `ws` source fails
+  fast with an actionable error pointing to a `command`-based alternative
+  (`websocat`/`wscat`). See Compatibility.
 
-- **`src/spawn.ts`** — gains a **split-output mode**. Current `spawnWithFileOutput` writes
-  stdout+stderr to one fd (`["ignore", logFd, logFd]`). Monitor needs stdout as the event
-  stream and stderr to a separate, non-emitting file. Add an optional `errPath`: when
-  present, stdio becomes `["ignore", outFd, errFd]`. Existing callers are unchanged
-  (single-fd behavior preserved when `errPath` is omitted).
+### WebSocket monitors and the Job model
+
+A ws monitor has **no child process**, so it does not fit the pid/process-tree shape the
+existing `Job` lifecycle assumes. Reconciliation:
+
+- **`pid: 0`** sentinel ("no process"). `killProcessTree(0)` already no-ops (guards
+  `pid <= 0`), so the standard kill path is safe and simply does nothing for the socket.
+- **`logPath`** is still allocated; the ws reader appends received frames to it, so
+  persistence, the sidebar preview, `jobs attach`, and Read all behave like a command
+  monitor.
+- **`command`** (the label shown in sidebar/jobs) is set to a synthetic `ws <url>`.
+- **Stop/kill** goes through a new transient **`Job.stop?: () => void`** callback (see
+  types change), set for every monitor. For ws it closes the socket and stops the
+  follower; for command monitors it also cancels the follower (the process is still killed
+  by the existing process-tree path). The kill path (`terminateJob` /
+  `terminateJobSilently`) invokes `job.stop` when present, in addition to the pid kill.
+- ws monitors are **not revived** across sessions (a socket cannot survive restart); on
+  `session_start` a persisted `kind: "monitor"` ws job is marked terminal and folded into
+  the counter (see Lifecycle).
+
+- **`src/spawn.ts`** — gains a **split-output mode**, used only by command monitors (ws
+  monitors do not spawn). Current `spawnWithFileOutput` writes stdout+stderr to one fd
+  (`["ignore", logFd, logFd]`). Monitor needs stdout as the event stream and stderr to a
+  separate, non-emitting file. Add an optional `errPath`: when present, stdio becomes
+  `["ignore", outFd, errFd]`. Existing callers are unchanged (single-fd behavior preserved
+  when `errPath` is omitted).
 
 ### Event delivery
 
@@ -116,31 +141,38 @@ pi.sendMessage(
 - Lines within 200 ms are batched into a single message.
 - On source exit, a terminal event is emitted with the exit code (`stream ended` /
   `script failed (exit N)` / `stopped`), mirroring Claude Code's stream-ended summaries.
+- **Monitor owns its terminal event**, so `startBackgroundJob` is called with
+  `shouldNotify: false`. Otherwise its `notifyFinished` (`EVENT.jobFinished`) would
+  double-fire alongside the monitor's own terminal event. `startBackgroundJob` is reused
+  only for its exit/abort wiring and registry bookkeeping, not its completion notice.
 
 ### Data flow
 
 ```
 monitor tool
   ├─ command source: spawnWithFileOutput({ command, logPath, errPath })
-  │     stdout → <jobId>.log  ──▶ monitor-follow (offset, complete lines, 200ms batch)
-  │     stderr → <jobId>.err  (readable via the file, never emits)
-  │                                   │
-  └─ ws source: WebSocket(url)  ──────┤ onEvent(lines)
+  │     stdout → <jobId>.log   (stderr → <jobId>.err, readable, never emits)
+  │
+  └─ ws source: WebSocket(url) ─ appends each frame as a line → <jobId>.log
+                                       │
+                          <jobId>.log ─▶ monitor-follow (offset 0, complete lines, 200ms batch)
+                                       │ onEvent(lines)
                                        ▼
-                       rate-limit window check
+                       rate-limit window check  ──(over cap)──▶ job.stop() + "tighten filter" msg
                                        ▼
               pi.sendMessage(followUp, triggerTurn) per batch
                                        │
-                                 source exit / close
+                          source exit / socket close
                                        ▼
-                       terminal event (exit code / close code)
+            terminal event (exit code / close code); startBackgroundJob shouldNotify:false
 ```
 
 ## Guardrails (ported from Claude Code, adapted)
 
 - **Rate limiting.** Count events in a sliding window. When a monitor exceeds the cap,
-  auto-stop it and emit one "stopped — tighten your filter" message. New constants in
-  `types.ts` (e.g. `MONITOR_EVENT_WINDOW_MS`, `MONITOR_MAX_EVENTS_PER_WINDOW`).
+  auto-stop it (via `job.stop` + mark terminal) and emit one "stopped — tighten your
+  filter" message. New constants in `types.ts` (e.g. `MONITOR_EVENT_WINDOW_MS`,
+  `MONITOR_MAX_EVENTS_PER_WINDOW`).
 - **Params** mirror the real Monitor schema:
   - `command` (string) XOR `ws` ({ url, protocols? }) — exactly one required.
   - `description` (string, required) — shown on every notification.
@@ -159,12 +191,28 @@ monitor tool
 
 ## Error handling & lifecycle
 
-- Reuses `startBackgroundJob` (completion/abort wiring), `killProcessTree`, session
-  persistence, and `session_shutdown` cleanup.
+- Reuses `startBackgroundJob` (exit/abort wiring, with `shouldNotify: false`),
+  `killProcessTree`, session persistence, and `session_shutdown` cleanup.
+- **Concurrency:** monitors count against the existing `MAX_CONCURRENT_JOBS` (16) cap via
+  `assertJobSlot`, same as `bash_bg`/`agent_bg`.
+- **Timeout:** at `timeout_ms` the monitor is **killed** (process-tree kill for command,
+  `job.stop` socket-close for ws) and a terminal `stopped (timeout)` event is emitted.
+  Monitor does **not** reuse `bash_bg`'s `requestJobDecision`/`requestPause` timeout path —
+  there is no interactive background-or-keep decision for a streaming watch.
+- **Stop/kill:** the `jobs` kill action and `terminateJob`/`terminateJobSilently` invoke
+  the transient `job.stop` callback (cancels the follower; closes the ws socket) in
+  addition to the existing pid process-tree kill. For command monitors the process tree is
+  killed; for ws monitors `pid: 0` makes the pid kill a no-op and `job.stop` does the work.
 - `persistent: true` → no timeout; stopped via the `jobs` manager / kill (the TaskStop
   equivalent in this extension).
-- `ws` monitors close the socket on abort/stop.
-- Spawn failures surface as a thrown tool error (consistent with `bash_bg`).
+- **Revival (`session_start`):** persisted monitors follow the existing
+  `reviveAndValidate` → `forgetJob` path. A ws monitor can never be revived (no socket
+  survives restart) and is always marked terminal and folded into the counter. A command
+  monitor whose recorded pid is no longer alive is likewise marked terminal; a still-alive
+  one keeps running but its follower is **not** re-attached (we do not re-stream historical
+  output) — it is treated as a running job that can be killed/inspected via `jobs`.
+- Spawn failures (command) and `WebSocket` construction/connection errors (ws) surface as a
+  thrown tool error (consistent with `bash_bg`).
 
 ## Compatibility (registry package)
 
@@ -192,6 +240,9 @@ Existing `node --test` harness (`src/__tests__/*.test.ts`):
   with code, using a local ws echo stub gated on `globalThis.WebSocket` availability.
 - **spawn split-output:** stdout and stderr land in separate files; single-fd callers
   unchanged when `errPath` omitted.
+- **Lifecycle:** a finished monitor emits exactly one terminal event (no `jobFinished`
+  double-fire); `job.stop` is invoked on kill; a persisted ws monitor is marked terminal
+  on revival rather than resurrected as running.
 
 ## Files
 
@@ -204,11 +255,13 @@ Existing `node --test` harness (`src/__tests__/*.test.ts`):
 
 **Changed**
 
-- `src/types.ts` — `Job.kind?: "shell" | "monitor"`, monitor constants,
-  `EVENT.monitorEvent`.
+- `src/types.ts` — `Job.kind?: "shell" | "monitor"`, transient `Job.stop?: () => void`
+  (not persisted), monitor constants, `EVENT.monitorEvent`.
 - `src/spawn.ts` — optional `errPath` split-output mode.
 - `src/registry.ts` — distinct monitor pill in `renderSidebar`.
-- `src/index.ts` — register the `monitor` tool; mention it in the header comment.
+- `src/index.ts` — register the `monitor` tool; update the header comment (now six
+  tools); strip the transient `stop` field in the `session_shutdown` persistence map
+  alongside `proc`/`donePromise`/`resolveDone`.
 - `src/tools/bash.ts`, `src/tools/bash-bg.ts` — steering guidance toward `monitor`.
 - `src/tools/jobs.ts` — show/kill monitors (with their kind reflected in the listing).
 - `README.md` (+ `README.ko.md`, `README.zh.md`) — document the `monitor` tool.
