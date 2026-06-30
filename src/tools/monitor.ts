@@ -15,14 +15,21 @@ import {
     MONITOR_MAX_LINES_PER_WINDOW,
     MONITOR_MAX_TIMEOUT_MS,
     MONITOR_RATE_WINDOW_MS,
-    type Job,
     type UiContext,
 } from "../types.ts";
 import { spawnWithFileOutput } from "../spawn.ts";
-import { add, nextJobId, logPathFor, renderSidebar } from "../registry.ts";
+import {
+    add,
+    createRunningJob,
+    errPathFor,
+    nextJobId,
+    logPathFor,
+    renderSidebar,
+} from "../registry.ts";
 import {
     assertJobSlot,
     isBlankCommand,
+    isSignalExit,
     requireExistingCwd,
     startBackgroundJob,
     terminateJobSilently,
@@ -131,29 +138,25 @@ export function registerMonitorTool(pi: ExtensionAPI, reg: BackgroundRegistry): 
                 wsClose = source.close;
                 commandLabel = `ws ${p.ws!.url}`;
             } else {
-                const errPath = logPath.replace(/\.log$/, ".err");
                 const spawned = spawnWithFileOutput({
                     command: p.command!,
                     cwd: mctx.cwd,
                     logPath,
-                    errPath,
+                    errPath: errPathFor(id),
                 });
                 exit = spawned.exit;
                 pid = spawned.pid;
                 commandLabel = p.command!;
             }
 
-            const job: Job = {
+            const job = createRunningJob({
                 id,
                 command: commandLabel,
                 pid,
-                startTime: Date.now(),
-                status: "running",
                 logPath,
                 toolCallId: _toolCallId,
-                isBackgrounded: true,
                 kind: "monitor",
-            };
+            });
             add(reg, job);
 
             // --- Event emission + rate limiting ---------------------------
@@ -162,17 +165,23 @@ export function registerMonitorTool(pi: ExtensionAPI, reg: BackgroundRegistry): 
             let windowStart = Date.now();
             let windowLines = 0;
 
-            const emitEvent = (lines: string[]): void => {
-                if (lines.length === 0) return;
+            // Single envelope for every monitor notification (stream events and
+            // the terminal summary) so the shape stays in one place.
+            const sendMonitorMessage = (content: string, terminal: boolean): void => {
                 pi.sendMessage(
                     {
                         customType: EVENT.monitorEvent,
-                        content: `◉ ${description}\n${lines.join("\n")}`,
+                        content,
                         display: true,
-                        details: { jobId: id, description, logPath },
+                        details: { jobId: id, description, logPath, terminal },
                     },
                     { deliverAs: "followUp", triggerTurn: true }
                 );
+            };
+
+            const emitEvent = (lines: string[]): void => {
+                if (lines.length === 0) return;
+                sendMonitorMessage(`◉ ${description}\n${lines.join("\n")}`, false);
             };
 
             const follower: MonitorFollower = followLines(logPath, (lines) => {
@@ -194,62 +203,70 @@ export function registerMonitorTool(pi: ExtensionAPI, reg: BackgroundRegistry): 
                 }
             });
 
-            // job.stop: transient teardown invoked by the kill path.
+            // job.stop: transient teardown invoked by the kill path. Closes the
+            // ws socket only — the follower is stopped *and flushed* by
+            // finishMonitor on the exit path (kill → process/socket close →
+            // exit → onExit), so a user-initiated kill stays lossless.
             job.stop = () => {
-                follower.stop(false);
                 wsClose?.();
             };
 
-            const finishMonitor = (summary: string, _isError: boolean): void => {
+            const finishMonitor = (summary: string): void => {
                 if (terminalEmitted) return;
                 // Flush remaining lines first (while terminalEmitted is still
                 // false so the follower callback emits them), then the summary.
                 finishing = true;
                 follower.stop(true);
                 terminalEmitted = true;
-                pi.sendMessage(
-                    {
-                        customType: EVENT.monitorEvent,
-                        content: `◉ ${description} — ${summary}`,
-                        display: true,
-                        details: { jobId: id, description, logPath, terminal: true },
-                    },
-                    { deliverAs: "followUp", triggerTurn: true }
-                );
+                sendMonitorMessage(`◉ ${description} — ${summary}`, true);
             };
 
             /** Forced stop (timeout / firehose). Emits a terminal event, then
              *  routes through the standard silent-kill path (which calls job.stop). */
             function stopMonitor(summary: string): void {
-                finishMonitor(summary, true);
+                finishMonitor(summary);
                 terminateJobSilently(reg, job);
                 renderSidebar(reg, mctx);
             }
 
             // Wire exit → terminal event. shouldNotify:false because the monitor
             // owns its own terminal event (no jobFinished double-fire).
-            startBackgroundJob({
+            // Monitors stream their own output, so the prompt-stall heuristic is
+            // nonsensical here; the oversize cap is also suppressed for
+            // persistent watches (session-length log tails are expected to grow).
+            const jobAc = startBackgroundJob({
                 reg,
                 pi,
                 ctx: mctx,
                 job,
                 exit,
                 shouldNotify: false,
+                disablePromptStall: true,
+                disableOversizeKill: persistent,
                 onExit: (code) => {
-                    const summary =
-                        code === 0 || code === null
-                            ? "stream ended"
-                            : `script failed (exit ${code})`;
-                    finishMonitor(summary, code !== 0 && code !== null);
+                    let summary: string;
+                    if (job.status === "killed" || isSignalExit(code)) {
+                        summary = "stopped";
+                    } else if (code === 0 || code === null) {
+                        summary = "stream ended";
+                    } else {
+                        summary = `script failed (exit ${code})`;
+                    }
+                    finishMonitor(summary);
                 },
             });
 
-            // Deadline (skipped for persistent watches).
+            // Deadline (skipped for persistent watches). Cleared when the job
+            // aborts (natural exit or kill) so a short monitor doesn't keep a
+            // live timer + closure alive for the whole timeout window.
             if (!persistent) {
-                const timer = setTimeout(() => {
+                const deadline = setTimeout(() => {
                     stopMonitor(`stopped (timeout after ${Math.round(timeoutMs / 1000)}s)`);
                 }, timeoutMs);
-                (timer as NodeJS.Timeout).unref();
+                (deadline as NodeJS.Timeout).unref();
+                jobAc.signal.addEventListener("abort", () => clearTimeout(deadline), {
+                    once: true,
+                });
             }
 
             const sourceDesc = hasWs ? `WebSocket ${p.ws!.url}` : "command";

@@ -18,6 +18,12 @@ export const MAX_LOG_BYTES = 100 * 1024 * 1024;
 export const OUTPUT_PREVIEW_CHARS = 12_000;
 export const RECENT_TERMINAL_KEEP = 20;
 export const MAX_CONCURRENT_JOBS = 16;
+/** Coalescing window for background-job completion notices. Completions within
+ *  this window collapse into one summary message instead of one line each, so a
+ *  burst of finished jobs doesn't dump a wall of `[job-finished]` lines. Kept
+ *  sub-second so a lone job's notice isn't perceptibly delayed; jobs launched
+ *  together still finish within tens of ms of each other and coalesce. */
+export const JOB_FINISH_COALESCE_MS = 400;
 
 // --- Monitor (streaming-event) constants ---
 /** Poll cadence for the line-accurate follower. Lines read within one tick are
@@ -65,6 +71,9 @@ export interface Job {
     kind?: JobKind;
     /** Transient teardown hook (follower + ws socket). Never persisted. */
     stop?: () => void;
+    /** Wall-clock finish time, stamped when queued for a completion notice so a
+     *  coalesced notice reports the true duration, not the flush time. */
+    endedAt?: number;
 }
 
 export type BackgroundReason = "manual" | "timeout";

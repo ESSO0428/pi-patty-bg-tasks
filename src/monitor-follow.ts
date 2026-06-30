@@ -46,10 +46,18 @@ export function followLines(
         } catch {
             return []; // file not created yet
         }
+        // Truncation/rotation: the file shrank below our offset. Reset so we
+        // don't go permanently silent reading past the new end.
+        if (size < offset) {
+            offset = 0;
+            remainder = "";
+        }
         if (size <= offset) return [];
 
         const toRead = size - offset;
-        const buf = Buffer.alloc(toRead);
+        // allocUnsafe is safe here: only the [0, n) slice that readSync fills is
+        // ever consumed below.
+        const buf = Buffer.allocUnsafe(toRead);
         let fd: number;
         try {
             fd = openSync(logPath, "r");

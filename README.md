@@ -144,6 +144,8 @@ monitor({ ws: { url: "wss://events.example.com/stream" }, description: "deploy e
 
 Monitors share the same job registry, sidebar (shown with a `◉` pill), and `jobs` manager as the background tools — only stdout is the event stream (stderr is captured to a separate `.err` file), output is line-buffered so use `grep --line-buffered`/`awk fflush()` (never `head`), and a monitor that floods events is auto-stopped so you can restart with a tighter filter. The `ws` source needs a runtime with a global `WebSocket` (Node 22+); otherwise use a `command` like `websocat`.
 
+> **Persistent monitors and disk:** a non-`persistent` monitor's output log is capped (oversized output kills it), but a `persistent` monitor is expected to run for the whole session, so its log is **not** size-capped — point a long-lived `tail -f` at a filtered stream rather than a firehose, and stop it with `jobs action='kill'` when done.
+
 ## Keyboard Shortcuts
 
 Keep your hands on the keyboard.

@@ -22,6 +22,7 @@ import {
     terminateJobSilently,
 } from "./lifecycle.ts";
 import { forget as forgetJob, stopSidebarTicker } from "./registry.ts";
+import { cancelFinishedFlush } from "./notify.ts";
 import {
     EVENT,
     PERSISTED_STATE_SCHEMA_VERSION,
@@ -112,6 +113,8 @@ export default function (pi: ExtensionAPI): void {
     pi.on("session_shutdown", async (event, _ctx) => {
         // Stop the live-duration ticker so the interval doesn't outlive the session.
         stopSidebarTicker(reg);
+        // Drop any open completion-coalescing window (its notice would never render).
+        cancelFinishedFlush(reg);
 
         // On quit, kill all running background jobs to avoid orphans.
         if (event.reason === "quit") {

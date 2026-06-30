@@ -147,6 +147,24 @@ void describe("monitor — revival", () => {
         assert.equal(verdict, "completed");
         assert.equal(job.status, "failed");
     });
+
+    void it("keeps a still-alive command monitor running (not orphaned)", () => {
+        // pid = this process (alive), id encodes this process → same-session reload.
+        const job = {
+            id: `job-${process.pid}-10`,
+            command: "tail -f app.log",
+            pid: process.pid,
+            startTime: Date.now(),
+            status: "running",
+            logPath: join(dir, "cmd.log"),
+            toolCallId: "t",
+            isBackgrounded: true,
+            kind: "monitor",
+        } as Job;
+        const verdict = reviveAndValidate(new BackgroundRegistry(), job);
+        assert.equal(verdict, "alive");
+        assert.equal(job.status, "running");
+    });
 });
 
 // --- WebSocket source (stubbed global WebSocket) -------------------------

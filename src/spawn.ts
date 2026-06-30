@@ -32,7 +32,13 @@ export function spawnWithFileOutput(args: {
 }): SpawnResult {
     mkdirSync(dirname(args.logPath), { recursive: true });
     const outFd = openSync(args.logPath, "w");
-    const errFd = args.errPath ? openSync(args.errPath, "w") : outFd;
+    let errFd: number;
+    try {
+        errFd = args.errPath ? openSync(args.errPath, "w") : outFd;
+    } catch (err) {
+        closeSync(outFd);
+        throw err;
+    }
 
     const [bin, binArgs]: [string, string[]] = args.file
         ? [args.file, args.fileArgs ?? []]

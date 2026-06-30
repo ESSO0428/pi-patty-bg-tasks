@@ -11,7 +11,8 @@
  * an actionable error rather than crashing.
  */
 
-import { appendFileSync, closeSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { dirname } from "node:path";
 
 export interface WsSpec {
     url: string;
@@ -47,12 +48,27 @@ export function openWsSource(spec: WsSpec, logPath: string): WsSource {
         );
     }
 
-    // Truncate/create the log so the follower can stat it immediately.
-    closeSync(openSync(logPath, "w"));
+    // Ensure the log dir exists (a ws monitor may be the first background job of
+    // the session, so LOG_DIR may not have been created by a spawn yet), then
+    // hold one appendable fd open for the socket's lifetime — one writeSync per
+    // frame instead of an open/write/close trio.
+    mkdirSync(dirname(logPath), { recursive: true });
+    const logFd = openSync(logPath, "w");
+    let fdClosed = false;
+    const closeFd = (): void => {
+        if (fdClosed) return;
+        fdClosed = true;
+        try {
+            closeSync(logFd);
+        } catch {
+            /* already closed */
+        }
+    };
 
     const append = (line: string): void => {
+        if (fdClosed) return;
         try {
-            appendFileSync(logPath, line.endsWith("\n") ? line : `${line}\n`);
+            writeSync(logFd, line.endsWith("\n") ? line : `${line}\n`);
         } catch {
             /* best-effort: a vanished log dir shouldn't take down the socket */
         }
@@ -69,6 +85,7 @@ export function openWsSource(spec: WsSpec, logPath: string): WsSource {
     const settle = (code: number): void => {
         if (settled) return;
         settled = true;
+        closeFd();
         resolveExit(code);
     };
 

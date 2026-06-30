@@ -24,7 +24,6 @@ import {
     OUTPUT_PREVIEW_CHARS,
     QUICK_COMPLETION_MS,
     type ForegroundSlot,
-    type Job,
     type UiContext,
 } from "../types.ts";
 import { spawnWithFileOutput, killProcessTree } from "../spawn.ts";
@@ -32,6 +31,7 @@ import { streamLog } from "../output.ts";
 import { showBackgroundHint, clearBackgroundHint } from "../hint.ts";
 import {
     add,
+    createRunningJob,
     markStarted,
     nextJobId,
     logPathFor,
@@ -179,16 +179,14 @@ async function runForeground(args: {
     reg.foreground.set(toolCallId, slot);
     reg.activeToolCallId = toolCallId;
 
-    const job: Job = {
+    const job = createRunningJob({
         id,
         command,
         pid: spawned.pid,
-        startTime: Date.now(),
-        status: "running",
         logPath,
         toolCallId,
         isBackgrounded: false,
-    };
+    });
     // Foreground jobs are tracked for the sidebar / Ctrl+Shift+B but not counted
     // as "started" until they actually move to the background (see below).
     reg.jobs.set(id, job);
@@ -312,17 +310,14 @@ function spawnBackground(args: {
         logPath,
     });
 
-    const job: Job = {
+    const job = createRunningJob({
         id,
         name: args.name,
         command: args.command,
         pid: spawned.pid,
-        startTime: Date.now(),
-        status: "running",
         logPath,
         toolCallId: args.toolCallId,
-        isBackgrounded: true,
-    };
+    });
     add(args.reg, job);
     startBackgroundJob({ reg: args.reg, pi: args.pi, ctx: args.ctx, job, exit: spawned.exit });
 
