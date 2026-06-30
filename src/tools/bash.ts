@@ -165,36 +165,20 @@ async function runForeground(args: {
         pauseResolve?.(reason);
     };
 
-    // Promote the running command to a tracked background job. Forward-declared
-    // so the abort handler (attached before the job exists) can call it; the
-    // real body is assigned right after the job is created.
-    let promoteToBackground: (reason: "manual" | "timeout") => void = () => {};
-
-    // A turn abort must NEVER kill the command. An abort can come from an
-    // implicit/tool timeout or an accidental Esc, and killing would lose
-    // long-running work (e.g. a multi-hour compute). Instead, detach it and keep
-    // it running as a background job — explicit kill (Ctrl+Shift+X / jobs kill)
-    // is the only thing that stops it.
+    // Claude Code parity for the turn's abort signal:
+    //   - No pause requested  → a genuine cancel (Esc / 'user-cancel'): kill the
+    //     process group, like CC's ShellCommand.#abortHandler.
+    //   - Pause already requested → cooperative steering / Ctrl+B / auto-bg
+    //     timeout moving the command to the background: leave it running (this is
+    //     CC's 'interrupt' / background path, which never kills).
+    // Long-running work is protected the CC way — by auto-backgrounding at the
+    // timeout — not by refusing to honor a deliberate cancel.
     const onTurnAbort = () => {
-        if (pauseRequested) return;
-        pauseRequested = true;
-        promoteToBackground("manual");
-        pauseResolve?.("manual");
-        ctx.ui.notify(
-            "▶ Kept running in the background — your command is safe (jobs to check / kill).",
-            "info"
-        );
+        if (!pauseRequested) killProcessTree(spawned.pid, "SIGTERM");
     };
     if (signal) {
-        if (signal.aborted) {
-            // Already aborted before we even started: mark a pause and let the
-            // completion race background it if it's long-running. Skip the "kept
-            // running" toast here — the command may finish in the quick window
-            // and never actually background.
-            requestPause("manual");
-        } else {
-            signal.addEventListener("abort", onTurnAbort);
-        }
+        if (signal.aborted) onTurnAbort();
+        else signal.addEventListener("abort", onTurnAbort);
     }
 
     const slot: ForegroundSlot = { requestPause };
@@ -213,13 +197,14 @@ async function runForeground(args: {
     // as "started" until they actually move to the background (see below).
     reg.jobs.set(id, job);
 
-    // Single hand-off to the background, deduped so the abort handler and the
-    // completion race can't double-register the job.
-    promoteToBackground = (reason: "manual" | "timeout") => {
+    // Promote the running command to a tracked background job (cooperative
+    // steering / Ctrl+B / auto-bg timeout). Idempotent.
+    const promoteToBackground = (reason: "manual" | "timeout") => {
         if (handedToBackground) return;
         handedToBackground = true;
-        // Clear the foreground slot now (not only in `finally`) so a survived
-        // command can't strand a stale slot if the turn is torn down on abort.
+        // Clear the foreground slot now (not only in `finally`) so a backgrounded
+        // command can't strand a stale slot when cooperative steering tears down
+        // the turn right after requesting the pause.
         reg.foreground.delete(toolCallId);
         if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
         job.isBackgrounded = true;

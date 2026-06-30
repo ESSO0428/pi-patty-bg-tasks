@@ -20,14 +20,10 @@ interface ToolDef {
 function harness() {
     let tool: ToolDef | undefined;
     const pi = {
-        registerTool: (def: ToolDef) => {
-            tool = def;
-        },
+        registerTool: (def: ToolDef) => { tool = def; },
         sendMessage: () => {},
     };
     const reg = new BackgroundRegistry();
-    // The override supplies name/params/execute; the original def is only spread
-    // for renderers, so an empty stub is enough here.
     registerBashTool(pi as never, reg, {} as never);
     const ctx = {
         cwd: process.cwd(),
@@ -41,43 +37,49 @@ function harness() {
     return { tool: tool!, reg, ctx };
 }
 
-void describe("bash foreground — survives a turn abort (no data loss)", () => {
+void describe("bash foreground — Claude Code parity on turn abort", () => {
     const spawnedPids: number[] = [];
 
-    void it("backgrounds the command instead of killing it when the turn aborts", async () => {
+    void it("a genuine cancel (Esc) KILLS the foreground command", async () => {
         const { tool, reg, ctx } = harness();
         const ac = new AbortController();
-
-        // Long-running command; don't await — it resolves once backgrounded.
         void tool.execute("t1", { command: "tail -f /dev/null" }, ac.signal, undefined, ctx);
-        await sleep(400); // let it spawn + register the foreground job
+        await sleep(400);
 
         const job = [...reg.jobs.values()][0] as Job;
-        assert.ok(job, "a foreground job was registered");
         const pid = job.pid;
         spawnedPids.push(pid);
-        assert.ok(processExists(pid), "process is running before the abort");
-        assert.equal(job.isBackgrounded, false, "still foreground before the abort");
+        assert.ok(processExists(pid), "running before the abort");
 
-        // The turn aborts (implicit timeout / Esc).
+        // No pause was requested → this is a deliberate cancel → CC kills it.
         ac.abort();
-        await sleep(150);
+        await sleep(200);
 
-        assert.ok(
-            processExists(pid),
-            "process MUST still be alive — a turn abort must not kill it"
-        );
-        assert.equal(job.isBackgrounded, true, "command survived as a background job");
-        assert.equal(job.status, "running", "background job is still running");
+        assert.ok(!processExists(pid), "process is killed on a genuine cancel (CC parity)");
+    });
+
+    void it("a backgrounding pause (steering / Ctrl+B) SURVIVES the abort", async () => {
+        const { tool, reg, ctx } = harness();
+        const ac = new AbortController();
+        void tool.execute("t2", { command: "tail -f /dev/null" }, ac.signal, undefined, ctx);
+        await sleep(400);
+
+        const job = [...reg.jobs.values()][0] as Job;
+        const pid = job.pid;
+        spawnedPids.push(pid);
+
+        // Cooperative path: a pause is requested (as steering / Ctrl+B does)
+        // BEFORE the abort — CC's 'interrupt'/background path never kills.
+        reg.foreground.get(job.toolCallId)?.requestPause("manual");
+        ac.abort();
+        await sleep(200);
+
+        assert.ok(processExists(pid), "backgrounded command survives the abort");
     });
 
     after(() => {
         for (const pid of spawnedPids) {
-            try {
-                killProcessTree(pid, "SIGKILL");
-            } catch {
-                /* already gone */
-            }
+            try { killProcessTree(pid, "SIGKILL"); } catch { /* already gone */ }
         }
     });
 });
