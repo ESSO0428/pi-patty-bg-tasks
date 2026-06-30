@@ -210,6 +210,11 @@ A live pill widget keeps your running jobs in view — each with its duration an
 
 ## Releases
 
+### 1.1.2 — One summary, not a wall of notices
+
+- **Background notices coalesce at the turn boundary.** Jobs and monitors that finish during a long agent turn no longer dump a wall of `[job-finished]` / `[bg-monitor-event]` lines after the agent's reply. They accumulate and flush as **one summary** when the turn ends (`agent_end`) — *"4 background events — 1 completed (job-19), 1 failed (job-30 exit 1); 2 monitors ended (API health, port 4000)."* While the agent is idle, a short fallback window coalesces instead. Monitor *stream* events (the matched lines you're watching) stay live.
+- A guard drains any notices stranded by a turn that ended abnormally, so nothing gets stuck undelivered.
+
 ### 1.1.1 — Parity fixes, no-data-loss, live progress
 
 - **Live progress in the sidebar.** A running job's pill now shows its **latest output line** (refreshed every second), not just the command — so a long poll/build shows progress at a glance (`◉ qdrant: {"indexed":8540629,"status":"grey"} (2m10s)`). ANSI/control sequences are stripped so the widget stays clean and can't be escape-injected.

@@ -80,6 +80,14 @@ export interface Job {
 
 export type BackgroundReason = "manual" | "timeout";
 
+/** A monitor's terminal notice (stream ended / stopped / failed), coalesced
+ *  with job completions into one turn-boundary summary. */
+export interface MonitorEnd {
+    description: string;
+    summary: string;
+    failed: boolean;
+}
+
 /** Transient handle for an in-flight foreground bash command, keyed by
  *  toolCallId in the registry. Ctrl+Shift+B and the timeout timer call
  *  requestPause to flip the command into the background. */

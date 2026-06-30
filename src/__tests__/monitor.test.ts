@@ -8,6 +8,7 @@ import { registerMonitorTool } from "../tools/monitor.ts";
 import { reviveAndValidate } from "../lifecycle.ts";
 import { spawnWithFileOutput } from "../spawn.ts";
 import { openWsSource, isWsSupported } from "../monitor-ws.ts";
+import { flushNotices } from "../notify.ts";
 import { EVENT, type Job } from "../types.ts";
 
 const dir = join(tmpdir(), `pi-bg-monitor-${process.pid}`);
@@ -46,7 +47,7 @@ function makeHarness() {
             theme: { fg: (_c: string, t: string) => t },
         },
     };
-    return { tool: tool!, reg, ctx, messages };
+    return { tool: tool!, reg, ctx, messages, pi };
 }
 
 void describe("monitor tool — validation", () => {
@@ -83,8 +84,8 @@ void describe("monitor tool — validation", () => {
 });
 
 void describe("monitor tool — command lifecycle", () => {
-    void it("emits stream events plus exactly one terminal event, and no jobFinished", async () => {
-        const { tool, ctx, messages } = makeHarness();
+    void it("streams lines live, and coalesces the terminal into one notice", async () => {
+        const { tool, ctx, messages, reg, pi } = makeHarness();
         const res = await tool.execute(
             "t4",
             { command: "printf 'line-A\\nline-B\\n'", description: "test stream" },
@@ -94,22 +95,25 @@ void describe("monitor tool — command lifecycle", () => {
         );
         assert.match(res.content[0].text, /Monitor job-.* started/);
 
-        await sleep(400); // let the source exit + terminal flush run
+        await sleep(300); // let the source exit + terminal enqueue
+        flushNotices(reg, pi as never, ctx as never); // force the coalesced flush
 
+        // Stream lines are delivered live as monitor events.
         const monitorEvents = messages.filter((m) => m.customType === EVENT.monitorEvent);
-        const terminal = monitorEvents.filter((m) => m.details?.terminal === true);
-        const jobFinished = messages.filter((m) => m.customType === EVENT.jobFinished);
-
-        // Lines were delivered (via flush on stop) and the watch ended once.
-        assert.ok(monitorEvents.length >= 1, "expected at least one monitor event");
-        assert.equal(terminal.length, 1, "expected exactly one terminal event");
-        assert.equal(jobFinished.length, 0, "monitor must not emit jobFinished");
-
-        const allText = monitorEvents
+        const streamText = monitorEvents
             .map((m) => (m as unknown as { content: string }).content)
             .join("\n");
-        assert.match(allText, /line-A/);
-        assert.match(allText, /line-B/);
+        assert.ok(monitorEvents.length >= 1, "expected at least one live stream event");
+        assert.match(streamText, /line-A/);
+        assert.match(streamText, /line-B/);
+
+        // The terminal notice is now coalesced into exactly one jobFinished.
+        const terminals = messages.filter((m) => m.customType === EVENT.jobFinished);
+        assert.equal(terminals.length, 1, "exactly one coalesced terminal notice");
+        assert.match(
+            (terminals[0] as unknown as { content: string }).content,
+            /test stream — stream ended/
+        );
     });
 });
 

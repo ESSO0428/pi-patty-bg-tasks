@@ -22,11 +22,12 @@ import {
     terminateJobSilently,
 } from "./lifecycle.ts";
 import { forget as forgetJob, stopSidebarTicker } from "./registry.ts";
-import { cancelFinishedFlush } from "./notify.ts";
+import { cancelPendingNotices, noteAgentEnd, noteAgentStart } from "./notify.ts";
 import {
     EVENT,
     PERSISTED_STATE_SCHEMA_VERSION,
     type Job,
+    type UiContext,
 } from "./types.ts";
 import { registerBashTool } from "./tools/bash.ts";
 import { registerBashBgTool } from "./tools/bash-bg.ts";
@@ -64,6 +65,17 @@ export default function (pi: ExtensionAPI): void {
     registerShortcuts(pi, reg);
     registerCommands(pi, reg);
     registerInputHandlers(pi, reg);
+
+    // ── Turn boundaries ───────────────────────────────────────────
+    // Hold background notices while the agent is mid-turn and flush them as ONE
+    // summary when the turn ends — so a long turn full of finishing jobs/monitors
+    // collapses into a single line instead of a wall dumped after the reply.
+    pi.on("agent_start", async (_event, ctx) => {
+        noteAgentStart(reg, pi, ctx as unknown as UiContext);
+    });
+    pi.on("agent_end", async (_event, ctx) => {
+        noteAgentEnd(reg, pi, ctx as unknown as UiContext);
+    });
 
     // ── Session start ─────────────────────────────────────────────
     pi.on("session_start", async (_event, ctx) => {
@@ -114,7 +126,7 @@ export default function (pi: ExtensionAPI): void {
         // Stop the live-duration ticker so the interval doesn't outlive the session.
         stopSidebarTicker(reg);
         // Drop any open completion-coalescing window (its notice would never render).
-        cancelFinishedFlush(reg);
+        cancelPendingNotices(reg);
 
         // On quit, kill all running background jobs to avoid orphans.
         if (event.reason === "quit") {

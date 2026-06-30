@@ -7,6 +7,7 @@ import { BackgroundRegistry } from "../state.ts";
 import { add, createRunningJob } from "../registry.ts";
 import { startMonitorSession } from "../monitor-session.ts";
 import type { MonitorSource } from "../monitor-source.ts";
+import { flushNotices } from "../notify.ts";
 import { EVENT, type Job, type UiContext } from "../types.ts";
 
 const dir = join(tmpdir(), `pi-bg-session-${process.pid}`);
@@ -64,10 +65,13 @@ function harness(logPath: string) {
             timeoutMs: over?.timeoutMs ?? 60_000,
         });
 
-    const terminals = () => messages.filter((m) => m.details?.terminal === true);
+    // The terminal notice is now coalesced (enqueueMonitorEnd → flushNotices),
+    // so force the flush, then find it among the captured messages.
+    const flush = () => flushNotices(reg, pi as never, ctx);
+    const terminals = () => messages.filter((m) => /◉ watch —/.test(m.content));
     const allText = () => messages.map((m) => m.content).join("\n");
 
-    return { messages, reg, job, start, resolveExit, isStopped: () => stopped, terminals, allText };
+    return { messages, reg, job, start, resolveExit, isStopped: () => stopped, flush, terminals, allText };
 }
 
 void describe("monitor-session — lifecycle via a fake source", () => {
@@ -80,6 +84,7 @@ void describe("monitor-session — lifecycle via a fake source", () => {
         await sleep(40);
         h.resolveExit(0);
         await sleep(60);
+        h.flush();
 
         assert.match(h.allText(), /line-A/);
         assert.match(h.allText(), /line-B/);
@@ -94,6 +99,7 @@ void describe("monitor-session — lifecycle via a fake source", () => {
         h.start();
         h.resolveExit(1);
         await sleep(60);
+        h.flush();
         assert.equal(h.terminals().length, 1);
         assert.match(h.terminals()[0].content, /script failed \(exit 1\)/);
     });
@@ -105,6 +111,7 @@ void describe("monitor-session — lifecycle via a fake source", () => {
         h.start();
         h.resolveExit(143);
         await sleep(60);
+        h.flush();
         assert.equal(h.terminals().length, 1);
         assert.match(h.terminals()[0].content, /stopped/);
     });
@@ -116,6 +123,7 @@ void describe("monitor-session — lifecycle via a fake source", () => {
         h.start();
         appendFileSync(logPath, Array.from({ length: 600 }, (_, i) => `e${i}`).join("\n") + "\n");
         await sleep(300); // let a follower tick read the burst
+        h.flush();
 
         assert.equal(h.terminals().length, 1, "exactly one terminal");
         assert.match(h.terminals()[0].content, /too many events/);
@@ -132,6 +140,7 @@ void describe("monitor-session — lifecycle via a fake source", () => {
         await sleep(60);
         h.resolveExit(1); // ignored — promise already settled
         await sleep(40);
+        h.flush();
         assert.equal(h.terminals().length, 1);
     });
 });

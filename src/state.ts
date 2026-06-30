@@ -4,7 +4,7 @@
  * One instance per session, threaded through every tool and helper.
  */
 
-import type { Job, ForegroundSlot } from "./types.ts";
+import type { Job, ForegroundSlot, MonitorEnd } from "./types.ts";
 
 export class BackgroundRegistry {
     jobs = new Map<string, Job>();
@@ -29,9 +29,14 @@ export class BackgroundRegistry {
     /** Last rendered sidebar content — used to skip redundant widget updates. */
     lastSidebarContent: string | undefined = undefined;
 
-    /** Finished jobs awaiting a coalesced completion notice (see notify.ts).
-     *  Buffered so a burst of completions surfaces as one summary, not a wall. */
+    /** Finished jobs + monitor terminals awaiting a coalesced notice (notify.ts).
+     *  Buffered so a whole turn's worth of finishes surfaces as one summary, not
+     *  a wall dumped after the agent's reply. */
     pendingFinished: Job[] = [];
-    /** Open coalescing window for pendingFinished; one flush per window. */
-    finishedFlushTimer: NodeJS.Timeout | undefined = undefined;
+    pendingMonitorEnds: MonitorEnd[] = [];
+    /** True while the agent is mid-turn (between agent_start and agent_end).
+     *  Notices flush at agent_end then, not on the idle fallback timer. */
+    agentBusy = false;
+    /** Idle-only coalescing fallback timer (armed only when the agent is idle). */
+    noticeFlushTimer: NodeJS.Timeout | undefined = undefined;
 }

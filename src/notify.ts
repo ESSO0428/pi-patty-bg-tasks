@@ -1,27 +1,34 @@
 /**
- * Coalesced completion notices for background jobs.
+ * Coalesced background-job notices.
  *
- * A single job that finishes still reads like a one-line notice. But a *burst*
- * of completions (e.g. a batch of fast test runs) used to emit one chat
- * follow-up per job, so N jobs dumped a wall of `[job-finished]` lines all at
- * once after the agent's next message. Here, completions within a short window
- * collapse into ONE summary message — Claude-Code-style "don't nag, surface
- * what matters."
+ * Background jobs and monitors finish at all sorts of times during a long agent
+ * turn. Sent individually, their notices queue in Pi and dump as a WALL after
+ * the agent's next reply — "10 [job-finished] lines all at once, long after they
+ * finished." So instead we accumulate every completion + monitor-terminal notice
+ * and flush ONE summary at the **turn boundary** (agent_end). A whole turn's
+ * worth — however spread out — collapses into a single line. While the agent is
+ * idle, a short fallback timer coalesces and flushes instead.
+ *
+ * Monitor *stream* events (matched log lines) are NOT routed here — they carry
+ * data the agent is actively watching and stay live. Only the terminal/status
+ * notices (stream ended / stopped / failed) and job completions coalesce.
  *
  * Jobs whose output was already consumed (e.g. via a jobs attach) never enqueue.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { EVENT, JOB_FINISH_COALESCE_MS, type Job, type UiContext } from "./types.ts";
+import {
+    EVENT,
+    JOB_FINISH_COALESCE_MS,
+    type Job,
+    type MonitorEnd,
+    type UiContext,
+} from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { LOG_DIR } from "./registry.ts";
 import { formatDuration } from "./format.ts";
 
-/**
- * Queue a finished job for a coalesced completion notice. The first job opens a
- * fixed window (leading-edge, so latency is bounded to JOB_FINISH_COALESCE_MS);
- * any job finishing within it joins the same batch and the window flushes once.
- */
+/** Queue a finished job for the next coalesced notice. */
 export function enqueueFinished(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
@@ -29,36 +36,79 @@ export function enqueueFinished(
     job: Job
 ): void {
     if (job.outputConsumed) return; // already surfaced via attach
-    // Stamp the finish time now (≈ completion) so a lone job's reported duration
-    // isn't inflated by up to the coalescing window when read at flush time.
+    // Stamp the finish time now (≈ completion) so the reported duration isn't
+    // inflated by however long the notice waits for the turn boundary.
     job.endedAt ??= Date.now();
     reg.pendingFinished.push(job);
-    if (reg.finishedFlushTimer) return; // window already open
-    // The first enqueuer's pi/ctx win for the whole window; both are
-    // session-global, so later jobs joining the batch dropping theirs is fine.
-    const timer = setTimeout(() => flushFinished(reg, pi, ctx), JOB_FINISH_COALESCE_MS);
-    (timer as NodeJS.Timeout).unref();
-    reg.finishedFlushTimer = timer;
+    armIdleFlush(reg, pi, ctx);
 }
 
-/** Flush the pending batch as one notice. No-op when empty. */
-export function flushFinished(
+/** Queue a monitor's terminal notice (stream ended / stopped / failed). */
+export function enqueueMonitorEnd(
+    reg: BackgroundRegistry,
+    pi: ExtensionAPI,
+    ctx: UiContext,
+    end: MonitorEnd
+): void {
+    reg.pendingMonitorEnds.push(end);
+    armIdleFlush(reg, pi, ctx);
+}
+
+/**
+ * Arm the fallback flush — but ONLY while the agent is idle. Mid-turn, notices
+ * accumulate and flush together at agent_end (see noteAgentEnd), so a long turn
+ * full of finishes yields one summary instead of a wall.
+ */
+function armIdleFlush(reg: BackgroundRegistry, pi: ExtensionAPI, ctx: UiContext): void {
+    if (reg.agentBusy) return;
+    if (reg.noticeFlushTimer) return;
+    const timer = setTimeout(() => flushNotices(reg, pi, ctx), JOB_FINISH_COALESCE_MS);
+    (timer as NodeJS.Timeout).unref();
+    reg.noticeFlushTimer = timer;
+}
+
+/**
+ * Agent started a turn: drain anything still pending (in case a previous turn
+ * threw before its agent_end and stranded notices), then hold new notices until
+ * this turn ends. The drain is a no-op on the happy path (buffers empty).
+ */
+export function noteAgentStart(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
     ctx: UiContext
 ): void {
-    if (reg.finishedFlushTimer) {
-        clearTimeout(reg.finishedFlushTimer);
-        reg.finishedFlushTimer = undefined;
-    }
+    flushNotices(reg, pi, ctx);
+    reg.agentBusy = true;
+    clearFlushTimer(reg);
+}
+
+/** Agent finished a turn: flush everything that accumulated as one summary. */
+export function noteAgentEnd(
+    reg: BackgroundRegistry,
+    pi: ExtensionAPI,
+    ctx: UiContext
+): void {
+    reg.agentBusy = false;
+    flushNotices(reg, pi, ctx);
+}
+
+/** Flush the pending batch as one notice. No-op when empty. */
+export function flushNotices(
+    reg: BackgroundRegistry,
+    pi: ExtensionAPI,
+    ctx: UiContext
+): void {
+    clearFlushTimer(reg);
     const jobs = reg.pendingFinished;
-    if (jobs.length === 0) return;
+    const monitors = reg.pendingMonitorEnds;
+    if (jobs.length === 0 && monitors.length === 0) return;
     reg.pendingFinished = [];
+    reg.pendingMonitorEnds = [];
 
-    const { content, level } = jobs.length === 1 ? formatSingle(jobs[0]) : formatBatch(jobs);
+    const { content, level } = formatNotices(jobs, monitors);
 
-    // Runs from a timer: a session reload/fork/switch can stale the captured
-    // ctx, so guard like ensureSidebarTicker rather than throw uncaught.
+    // Runs from a timer / event: a session reload/fork/switch can stale the ctx,
+    // so guard rather than throw uncaught.
     try {
         ctx.ui.notify(content, level);
         pi.sendMessage(
@@ -67,7 +117,8 @@ export function flushFinished(
                 content,
                 display: true,
                 details: {
-                    count: jobs.length,
+                    jobCount: jobs.length,
+                    monitorCount: monitors.length,
                     jobs: jobs.map((j) => ({
                         jobId: j.id,
                         status: j.status,
@@ -75,12 +126,12 @@ export function flushFinished(
                         command: j.command,
                         logPath: j.logPath,
                     })),
+                    monitors: monitors.map((m) => ({ description: m.description, summary: m.summary })),
                 },
             },
-            // Unlike stall/timeout/monitor events (triggerTurn:true), a "job
-            // done" notice must NOT wake an idle agent into a new turn — that
-            // would spin autonomous loops when the user isn't engaged. The human
-            // already saw it live via ctx.ui.notify; the agent picks it up at the
+            // A background notice must NOT wake an idle agent into a new turn —
+            // that would spin autonomous loops when the user isn't engaged. The
+            // human saw it live via ctx.ui.notify; the agent picks it up at the
             // next turn boundary. Do not change to "steer"/triggerTurn:true.
             { deliverAs: "followUp", triggerTurn: false }
         );
@@ -89,21 +140,63 @@ export function flushFinished(
     }
 }
 
-/** Cancel any open window without flushing (session shutdown). */
-export function cancelFinishedFlush(reg: BackgroundRegistry): void {
-    if (reg.finishedFlushTimer) {
-        clearTimeout(reg.finishedFlushTimer);
-        reg.finishedFlushTimer = undefined;
-    }
+/** Cancel any pending notices without flushing (session shutdown). */
+export function cancelPendingNotices(reg: BackgroundRegistry): void {
+    clearFlushTimer(reg);
     reg.pendingFinished = [];
+    reg.pendingMonitorEnds = [];
+}
+
+function clearFlushTimer(reg: BackgroundRegistry): void {
+    if (reg.noticeFlushTimer) {
+        clearTimeout(reg.noticeFlushTimer);
+        reg.noticeFlushTimer = undefined;
+    }
 }
 
 // --- Formatting ----------------------------------------------------------
 
 type Notice = { content: string; level: "info" | "error" };
 
+/** One notice → its single line; many → a grouped summary. */
+function formatNotices(jobs: Job[], monitors: MonitorEnd[]): Notice {
+    if (jobs.length + monitors.length === 1) {
+        return jobs.length === 1 ? formatSingleJob(jobs[0]) : formatSingleMonitor(monitors[0]);
+    }
+
+    const completed = jobs.filter((j) => j.status === "completed");
+    const failed = jobs.filter((j) => j.status !== "completed");
+    const clauses: string[] = [];
+    if (completed.length > 0) {
+        clauses.push(`${completed.length} completed (${completed.map((j) => j.id).join(", ")})`);
+    }
+    if (failed.length > 0) {
+        const ids = failed
+            .map((j) => (j.exitCode !== undefined && j.exitCode !== 0 ? `${j.id} exit ${j.exitCode}` : j.id))
+            .join(", ");
+        clauses.push(`${failed.length} failed (${ids})`);
+    }
+    if (monitors.length > 0) {
+        clauses.push(
+            `${monitors.length} monitor${monitors.length > 1 ? "s" : ""} ended (${monitors.map((m) => m.description).join(", ")})`
+        );
+    }
+
+    const head =
+        jobs.length > 0 && monitors.length > 0
+            ? `${jobs.length + monitors.length} background events`
+            : jobs.length > 0
+              ? `${jobs.length} background jobs finished`
+              : `${monitors.length} monitors ended`;
+    const anyFailed = failed.length > 0 || monitors.some((m) => m.failed);
+    return {
+        content: `${head} — ${clauses.join("; ")}. Outputs in ${LOG_DIR}/`,
+        level: anyFailed ? "error" : "info",
+    };
+}
+
 /** The familiar single-job line, unchanged from the pre-coalescing behavior. */
-function formatSingle(job: Job): Notice {
+function formatSingleJob(job: Job): Notice {
     const duration = formatDuration((job.endedAt ?? Date.now()) - job.startTime);
     // Not jobLabel(): the id is appended separately below, so the label slot
     // prefers the command over the id to stay human-readable.
@@ -120,24 +213,10 @@ function formatSingle(job: Job): Notice {
     };
 }
 
-/** One grouped summary for a burst: completed ids, then failed/killed ids with
- *  exit codes. Failures make the whole notice an error so they stay prominent. */
-function formatBatch(jobs: Job[]): Notice {
-    const completed = jobs.filter((j) => j.status === "completed");
-    const failed = jobs.filter((j) => j.status !== "completed");
-
-    const parts: string[] = [];
-    if (completed.length > 0) {
-        parts.push(`${completed.length} completed (${completed.map((j) => j.id).join(", ")})`);
-    }
-    if (failed.length > 0) {
-        const ids = failed
-            .map((j) => (j.exitCode !== undefined && j.exitCode !== 0 ? `${j.id} exit ${j.exitCode}` : j.id))
-            .join(", ");
-        parts.push(`${failed.length} failed (${ids})`);
-    }
+/** A lone monitor terminal notice. */
+function formatSingleMonitor(end: MonitorEnd): Notice {
     return {
-        content: `${jobs.length} background jobs finished — ${parts.join(", ")}. Outputs in ${LOG_DIR}/`,
-        level: failed.length > 0 ? "error" : "info",
+        content: `◉ ${end.description} — ${end.summary}`,
+        level: end.failed ? "error" : "info",
     };
 }

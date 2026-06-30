@@ -22,6 +22,7 @@ import { renderSidebar } from "./registry.ts";
 import { isSignalExit, startBackgroundJob, terminateJobSilently } from "./lifecycle.ts";
 import { followLines, type MonitorFollower } from "./monitor-follow.ts";
 import type { MonitorSource } from "./monitor-source.ts";
+import { enqueueMonitorEnd } from "./notify.ts";
 
 /**
  * Wire a monitor's source to its event stream, terminal event, deadline, and
@@ -46,23 +47,21 @@ export function startMonitorSession(args: {
     let windowStart = Date.now();
     let windowLines = 0;
 
-    // Single envelope for every monitor notification (stream events and the
-    // terminal summary) so the shape stays in one place.
-    const sendMonitorMessage = (content: string, terminal: boolean): void => {
+    // Stream events stay live (triggerTurn:true) — they carry data the agent is
+    // actively watching. The terminal notice (stream ended / stopped / failed)
+    // goes through the coalescer instead (see finishMonitor), so a batch of
+    // monitors ending doesn't add to the wall of notices.
+    const emitEvent = (lines: string[]): void => {
+        if (lines.length === 0) return;
         pi.sendMessage(
             {
                 customType: EVENT.monitorEvent,
-                content,
+                content: `◉ ${description}\n${lines.join("\n")}`,
                 display: true,
-                details: { jobId: id, description, logPath, terminal },
+                details: { jobId: id, description, logPath, terminal: false },
             },
             { deliverAs: "followUp", triggerTurn: true }
         );
-    };
-
-    const emitEvent = (lines: string[]): void => {
-        if (lines.length === 0) return;
-        sendMonitorMessage(`◉ ${description}\n${lines.join("\n")}`, false);
     };
 
     const follower: MonitorFollower = followLines(logPath, (lines) => {
@@ -95,11 +94,15 @@ export function startMonitorSession(args: {
     const finishMonitor = (summary: string): void => {
         if (terminalEmitted) return;
         // Flush remaining lines first (while terminalEmitted is still false so
-        // the follower callback emits them), then the summary.
+        // the follower callback emits them), then the coalesced terminal notice.
         finishing = true;
         follower.stop(true);
         terminalEmitted = true;
-        sendMonitorMessage(`◉ ${description} — ${summary}`, true);
+        enqueueMonitorEnd(reg, pi, ctx, {
+            description,
+            summary,
+            failed: summary.startsWith("script failed"),
+        });
     };
 
     /** Forced stop (timeout / firehose). Emits a terminal event, then routes
