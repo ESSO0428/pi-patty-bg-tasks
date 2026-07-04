@@ -109,6 +109,18 @@ export const EVENT = {
 
 export type EventName = (typeof EVENT)[keyof typeof EVENT];
 
+// --- Deliver options ---
+/** Steer the message into the current/next turn AND wake the agent.
+ *  Use when the message IS the answer to a question the agent must address
+ *  now (a finished background job, a deadline decision). */
+export const DELIVER_STEER = { deliverAs: "steer", triggerTurn: true } as const;
+/** Queue the message behind the current turn; the agent picks it up when
+ *  the user next engages or the current turn ends. Use for warnings and
+ *  follow-ups the agent should see eventually but doesn't have to react
+ *  to immediately. NOTE: sendMessage-only — `pi.sendUserMessage` rejects
+ *  `triggerTurn` and takes just `{ deliverAs: "followUp" }`. */
+export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: true } as const;
+
 // --- UI context ---
 export interface UiContext {
     ui: {

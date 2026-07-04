@@ -7,7 +7,7 @@ import { BackgroundRegistry } from "../state.ts";
 import { add, createRunningJob } from "../registry.ts";
 import { startMonitorSession } from "../monitor-session.ts";
 import type { MonitorSource } from "../monitor-source.ts";
-import { flushNotices } from "../notify.ts";
+import { flushTurnBoundaryNotices } from "../notify.ts";
 import { EVENT, type Job, type UiContext } from "../types.ts";
 
 const dir = join(tmpdir(), `pi-bg-session-${process.pid}`);
@@ -65,9 +65,9 @@ function harness(logPath: string) {
             timeoutMs: over?.timeoutMs ?? 60_000,
         });
 
-    // The terminal notice is now coalesced (enqueueMonitorEnd → flushNotices),
+    // The terminal notice is now coalesced (enqueueMonitorEnd → flushTurnBoundaryNotices),
     // so force the flush, then find it among the captured messages.
-    const flush = () => flushNotices(reg, pi as never, ctx);
+    const flush = () => flushTurnBoundaryNotices(reg, pi as never, ctx);
     const terminals = () => messages.filter((m) => /◉ watch —/.test(m.content));
     const allText = () => messages.map((m) => m.content).join("\n");
 

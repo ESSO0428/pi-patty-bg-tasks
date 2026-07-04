@@ -8,7 +8,7 @@ import { registerMonitorTool } from "../tools/monitor.ts";
 import { reviveAndValidate } from "../lifecycle.ts";
 import { spawnWithFileOutput } from "../spawn.ts";
 import { openWsSource, isWsSupported } from "../monitor-ws.ts";
-import { flushNotices } from "../notify.ts";
+import { flushTurnBoundaryNotices } from "../notify.ts";
 import { EVENT, type Job } from "../types.ts";
 
 const dir = join(tmpdir(), `pi-bg-monitor-${process.pid}`);
@@ -96,7 +96,7 @@ void describe("monitor tool — command lifecycle", () => {
         assert.match(res.content[0].text, /Monitor job-.* started/);
 
         await sleep(300); // let the source exit + terminal enqueue
-        flushNotices(reg, pi as never, ctx as never); // force the coalesced flush
+        flushTurnBoundaryNotices(reg, pi as never, ctx as never); // force the coalesced flush
 
         // Stream lines are delivered live as monitor events.
         const monitorEvents = messages.filter((m) => m.customType === EVENT.monitorEvent);

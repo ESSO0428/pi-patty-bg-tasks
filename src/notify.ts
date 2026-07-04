@@ -5,9 +5,11 @@
  * turn. Sent individually, their notices queue in Pi and dump as a WALL after
  * the agent's next reply — "10 [job-finished] lines all at once, long after they
  * finished." So instead we accumulate every completion + monitor-terminal notice
- * and flush ONE summary at the **turn boundary** (agent_end). A whole turn's
- * worth — however spread out — collapses into a single line. While the agent is
- * idle, a short fallback timer coalesces and flushes instead.
+ * and flush ONE summary. Mid-turn, the flush fires at **agent_end** as a passive
+ * follow-up so a whole turn's worth collapses into one line without spawning an
+ * unsolicited follow-up turn. While the agent is idle, a short fallback timer
+ * coalesces and flushes instead — AND wakes the agent via a steer, because the
+ * user isn't engaged and the banner alone won't get the agent to react.
  *
  * Monitor *stream* events (matched log lines) are NOT routed here — they carry
  * data the agent is actively watching and stay live. Only the terminal/status
@@ -18,6 +20,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+    DELIVER_FOLLOWUP,
+    DELIVER_STEER,
     EVENT,
     JOB_FINISH_COALESCE_MS,
     type Job,
@@ -61,7 +65,10 @@ export function enqueueMonitorEnd(
 function armIdleFlush(reg: BackgroundRegistry, pi: ExtensionAPI, ctx: UiContext): void {
     if (reg.agentBusy) return;
     if (reg.noticeFlushTimer) return;
-    const timer = setTimeout(() => flushNotices(reg, pi, ctx), JOB_FINISH_COALESCE_MS);
+    const timer = setTimeout(
+        () => flushIdleNotices(reg, pi, ctx),
+        JOB_FINISH_COALESCE_MS
+    );
     (timer as NodeJS.Timeout).unref();
     reg.noticeFlushTimer = timer;
 }
@@ -70,32 +77,61 @@ function armIdleFlush(reg: BackgroundRegistry, pi: ExtensionAPI, ctx: UiContext)
  * Agent started a turn: drain anything still pending (in case a previous turn
  * threw before its agent_end and stranded notices), then hold new notices until
  * this turn ends. The drain is a no-op on the happy path (buffers empty).
+ * Drain path uses the turn-boundary shape (no wake) — a stranded batch from a
+ * prior turn should not autonomously start a new turn.
  */
 export function noteAgentStart(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
     ctx: UiContext
 ): void {
-    flushNotices(reg, pi, ctx);
+    flushTurnBoundaryNotices(reg, pi, ctx);
     reg.agentBusy = true;
     clearFlushTimer(reg);
 }
 
-/** Agent finished a turn: flush everything that accumulated as one summary. */
+/** Agent finished a turn: flush everything that accumulated as one summary.
+ *  Uses the turn-boundary shape (no wake) — waking here would spawn an
+ *  unsolicited follow-up turn that defeats coalescing. */
 export function noteAgentEnd(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
     ctx: UiContext
 ): void {
     reg.agentBusy = false;
-    flushNotices(reg, pi, ctx);
+    flushTurnBoundaryNotices(reg, pi, ctx);
 }
 
-/** Flush the pending batch as one notice. No-op when empty. */
-export function flushNotices(
+/** Idle-path flush: wakes the agent via a steer so the agent actually reacts
+ *  to the finished job (the user isn't engaged to prompt otherwise). */
+export function flushIdleNotices(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
     ctx: UiContext
+): void {
+    sendCoalescedNotice(reg, pi, ctx, DELIVER_STEER);
+}
+
+/** Turn-boundary flush: passive follow-up. No wake — the agent just finished
+ *  a turn and waking here would spawn an unsolicited follow-up turn. */
+export function flushTurnBoundaryNotices(
+    reg: BackgroundRegistry,
+    pi: ExtensionAPI,
+    ctx: UiContext
+): void {
+    sendCoalescedNotice(reg, pi, ctx, DELIVER_FOLLOWUP);
+}
+
+/** Shared flush body. Drains the pending buffers and emits the notice. If
+ *  either `notify` or `sendMessage` throws (typically a stale ctx after a
+ *  session switch), the drained items are re-queued at the head of the
+ *  pending buffers so the next attempt can retry them — preventing silent
+ *  loss of completion notices. */
+function sendCoalescedNotice(
+    reg: BackgroundRegistry,
+    pi: ExtensionAPI,
+    ctx: UiContext,
+    deliver: typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP
 ): void {
     clearFlushTimer(reg);
     const jobs = reg.pendingFinished;
@@ -106,10 +142,18 @@ export function flushNotices(
 
     const { content, level } = formatNotices(jobs, monitors);
 
-    // Runs from a timer / event: a session reload/fork/switch can stale the ctx,
-    // so guard rather than throw uncaught.
     try {
         ctx.ui.notify(content, level);
+    } catch (err) {
+        // Banner failed (typically a stale ctx after a session switch/fork).
+        // Re-queue at the head so the next flush attempt can retry, and bail
+        // — if the UI is stale, sendMessage is almost certainly stale too.
+        requeueHead(reg, jobs, monitors);
+        log.error("[bg-tasks] notice dropped, re-queued:", err);
+        return;
+    }
+
+    try {
         pi.sendMessage(
             {
                 customType: EVENT.jobFinished,
@@ -128,15 +172,41 @@ export function flushNotices(
                     monitors: monitors.map((m) => ({ description: m.description, summary: m.summary })),
                 },
             },
-            // A background notice must NOT wake an idle agent into a new turn —
-            // that would spin autonomous loops when the user isn't engaged. The
-            // human saw it live via ctx.ui.notify; the agent picks it up at the
-            // next turn boundary. Do not change to "steer"/triggerTurn:true.
-            { deliverAs: "followUp", triggerTurn: false }
+            deliver
         );
-    } catch {
-        /* stale ctx after a session switch — drop the notice */
+    } catch (err) {
+        // Banner went out but the agent didn't get the wake. Re-queue at the
+        // head so a retry surfaces the notice to the agent on the next pass.
+        requeueHead(reg, jobs, monitors);
+        log.error("[bg-tasks] sendMessage failed, notice re-queued:", err);
+        return;
     }
+}
+
+/** Prepend drained jobs + monitors back onto the pending buffers so the next
+ *  flush attempt retries them. Centralized so a future code path can't
+ *  accidentally forget one of the two buffers. */
+function requeueHead(
+    reg: BackgroundRegistry,
+    jobs: readonly Job[],
+    monitors: readonly MonitorEnd[]
+): void {
+    if (jobs.length) reg.pendingFinished = [...jobs, ...reg.pendingFinished];
+    if (monitors.length) reg.pendingMonitorEnds = [...monitors, ...reg.pendingMonitorEnds];
+}
+
+/** Logger hook for the re-queue paths. Tests swap `log` for a no-op so the
+ *  throw-path tests don't pollute test output; production keeps it as
+ *  `console.error`. Mutable so `setLogger` can swap at runtime. */
+interface Logger {
+    error(...args: unknown[]): void;
+}
+let log: Logger = {
+    error: (...args: unknown[]): void => console.error(...args),
+};
+/** Swap the logger (used by tests). Pass `null` to restore the default. */
+export function setLogger(next: Logger | null): void {
+    log = next ?? { error: (...args: unknown[]): void => console.error(...args) };
 }
 
 /** Cancel any pending notices without flushing (session shutdown). */

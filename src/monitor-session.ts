@@ -12,6 +12,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { BackgroundRegistry } from "./state.ts";
 import {
+    DELIVER_FOLLOWUP,
     EVENT,
     MONITOR_MAX_LINES_PER_WINDOW,
     MONITOR_RATE_WINDOW_MS,
@@ -60,7 +61,7 @@ export function startMonitorSession(args: {
                 display: true,
                 details: { jobId: id, description, logPath, terminal: false },
             },
-            { deliverAs: "followUp", triggerTurn: true }
+            DELIVER_FOLLOWUP
         );
     };
 

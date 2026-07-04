@@ -11,6 +11,7 @@ import { readdir, stat, unlink } from "node:fs/promises";
 import { join as pathJoin } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+    DELIVER_FOLLOWUP,
     EVENT,
     MAX_CONCURRENT_JOBS,
     type Job,
@@ -261,7 +262,7 @@ export function sendBackgroundNotice(pi: ExtensionAPI): void {
                 `You can continue working — use the jobs tool to check on it later.`,
             display: true,
         },
-        { deliverAs: "followUp", triggerTurn: true }
+        DELIVER_FOLLOWUP
     );
 }
 
@@ -368,7 +369,7 @@ export function requestJobDecision(args: {
                 command: args.job.command,
             },
         },
-        { deliverAs: "followUp", triggerTurn: true }
+        DELIVER_FOLLOWUP
     );
 }
 

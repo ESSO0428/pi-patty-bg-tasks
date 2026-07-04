@@ -10,6 +10,7 @@ import { openSync, readSync, closeSync, statSync as fsStatSync } from "node:fs";
 import { setTimeout as nodeSetTimeout } from "node:timers";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+    DELIVER_FOLLOWUP,
     EVENT,
     MAX_LOG_BYTES,
     STALL_CHECK_INTERVAL_MS,
@@ -58,7 +59,7 @@ export function watchStalls(args: {
                         display: true,
                         details: { jobId: args.jobId, logPath: args.logPath, command: args.command },
                     },
-                    { deliverAs: "followUp", triggerTurn: true }
+                    DELIVER_FOLLOWUP
                 );
                 return;
             }
@@ -144,6 +145,6 @@ function sendStallPrompt(
             display: true,
             details: { jobId, logPath, command },
         },
-        { deliverAs: "followUp", triggerTurn: true }
+        DELIVER_FOLLOWUP
     );
 }
