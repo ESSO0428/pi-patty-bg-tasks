@@ -11,6 +11,7 @@ import {
     noteAgentStart,
     setLogger,
 } from "../notify.ts";
+import { markOutcomeKnown, markTerminal } from "../lifecycle.ts";
 import { type Job, type UiContext } from "../types.ts";
 
 interface Captured {
@@ -76,7 +77,7 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.equal(messages.length, 1);
         const c = messages[0].content;
         assert.match(c, /^✓ tests \(/m);
-        assert.ok(c.includes('jobId: "job-1-5"'));
+        assert.ok(c.includes("job-1-5"), "job id appears in the status line");
     });
 
     void it("collapses a whole turn's finishes (spread out) into ONE summary at agent_end", () => {
@@ -100,10 +101,15 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.match(c, /2 monitors ended/);
         assert.match(c, /^✓ "npm test" \(/m);
         assert.match(c, /^✗ "npm test" \(.*exit 1/m);
-        assert.ok(c.includes('jobId: "job-1-1"'));
-        assert.ok(c.includes('jobId: "job-1-2"'));
+        // Both job ids appear in their status lines.
+        assert.ok(c.includes("job-1-1"), "completed job id in its status line");
+        assert.ok(c.includes("job-1-2"), "failed job id in its status line");
         assert.match(c, /◉ API health — stream ended/);
         assert.match(c, /◉ port 4000 — stopped \(timeout\)/);
+        // Only the failed job carries a nudge; the completed one is bare.
+        const nudges = c.split("\n").filter((l) => l.includes("jobs({ action: \"output\""));
+        assert.equal(nudges.length, 1, "nudge only for the failed job");
+        assert.ok(nudges.some((n) => n.includes('"job-1-2"')));
     });
 
     void it("does not flush mid-turn even past the idle window", async () => {
@@ -126,9 +132,10 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.equal(messages.length, 1, "one coalesced flush after the idle window");
         const c = messages[0].content;
         assert.match(c, /2 background jobs finished/);
-        // Each finished job carries its own nudge so the agent knows what to do next.
+        // Completed jobs carry no nudge (Claude Code parity) — they're reported
+        // as bare status lines. The agent only needs to act on failures.
         const nudges = c.split("\n").filter((l) => l.includes("jobs({ action: \"output\""));
-        assert.equal(nudges.length, 2);
+        assert.equal(nudges.length, 0);
     });
 
     void it("noteAgentStart drains stranded notices (guard), then holds new ones for the turn", async () => {
@@ -146,15 +153,15 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.equal(messages.length, 2);
     });
 
-    void it("every finished job line carries an output-read nudge", () => {
+    void it("only failed jobs carry an output-read nudge (completed are bare)", () => {
         const { reg, pi, ctx, messages } = harness();
-        enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-1-1" }));
+        enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-1-1", status: "completed" }));
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-1-2", status: "failed", exitCode: 2 }));
         flushTurnBoundaryNotices(reg, pi as never, ctx);
         const c = messages[0].content;
         const nudges = c.split("\n").filter((l) => l.includes("jobs({ action: \"output\""));
-        assert.equal(nudges.length, 2);
-        assert.ok(nudges.some((n) => n.includes('"job-1-1"')));
+        assert.equal(nudges.length, 1, "nudge only for the failed job");
+        assert.ok(!nudges.some((n) => n.includes('"job-1-1"')));
         assert.ok(nudges.some((n) => n.includes('"job-1-2"')));
     });
 
@@ -230,6 +237,44 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.equal(reg.pendingFinished.length, 0);
     });
 
+    void it("markOutcomeKnown suppresses a later completion notice (CC `notified` parity)", () => {
+        // Mirrors Claude Code's markTaskNotified: once the agent learns a job's
+        // outcome through ANY path (jobs output / job_decide / attach), the
+        // pending completion notice is suppressed so the agent isn't re-told
+        // about something it already handled.
+        const { reg, pi, ctx, messages } = harness();
+        const job = mkJob({ id: "job-1-1", status: "running" });
+        // Agent resolves the job via job_decide / jobs output BEFORE it would
+        // finish — markOutcomeKnown records that the outcome is known.
+        markOutcomeKnown(job);
+        // No-op while running: the flag only sticks once the job is terminal.
+        assert.equal(job.outputConsumed, undefined);
+        // Now the job finishes and is enqueued for a notice…
+        markTerminal(job, "completed");
+        markOutcomeKnown(job);
+        enqueueFinished(reg, pi as never, ctx, job);
+        flushTurnBoundaryNotices(reg, pi as never, ctx);
+        assert.equal(messages.length, 0, "outcome already known — no notice");
+    });
+
+    void it("markOutcomeKnown AFTER enqueue still suppresses at flush (mid-turn race)", () => {
+        // The race the enqueue-time gate alone can't catch: a job completes
+        // mid-turn and is parked in pendingFinished, THEN the agent reads its
+        // output (jobs output / job_decide check) in the same turn — flipping
+        // outputConsumed while the job is already buffered. The turn-end flush
+        // must drop it, not emit it.
+        const { reg, pi, ctx, messages } = harness();
+        const job = mkJob({ id: "job-1-1", status: "completed" });
+        noteAgentStart(reg, pi as never, ctx); // hold for the turn
+        enqueueFinished(reg, pi as never, ctx, job);
+        assert.equal(reg.pendingFinished.length, 1, "parked mid-turn");
+        // Agent learns the outcome later in the same turn.
+        markOutcomeKnown(job);
+        noteAgentEnd(reg, pi as never, ctx); // turn-end flush
+        assert.equal(messages.length, 0, "already-known job dropped at flush");
+        assert.equal(reg.pendingFinished.length, 0, "not re-queued");
+    });
+
     void it("flush is a no-op when nothing is pending", () => {
         const { reg, pi, ctx, messages } = harness();
         flushTurnBoundaryNotices(reg, pi as never, ctx);
@@ -273,7 +318,8 @@ void describe("notify — wake shape per path", () => {
         assert.equal(messages.length, 1);
         assert.equal(deliverOptions.length, 1);
         assert.equal(deliverOptions[0].deliverAs, "followUp");
-        assert.equal(deliverOptions[0].triggerTurn, true);
+        assert.equal(deliverOptions[0].triggerTurn, false,
+            "turn-boundary notice must not spawn an unsolicited turn");
     });
 
     void it("noteAgentStart drain path is passive (stranded notices don't wake)", () => {

@@ -113,17 +113,20 @@ void describe("statusLine", () => {
 });
 
 void describe("nudgeLine", () => {
-    void it("returns the jobs({ action: 'output', jobId }) tool call", () => {
-        assert.equal(
-            nudgeLine(mkJob({ id: "job-3-7" })),
-            '  → jobs({ action: "output", jobId: "job-3-7" })'
-        );
+    void it("returns null for completed jobs (bare status, nothing to act on)", () => {
+        assert.equal(nudgeLine(mkJob({ id: "job-3-7", status: "completed" })), null);
     });
     void it("returns null for killed jobs (intentional cleanup, no nudge)", () => {
         assert.equal(nudgeLine(mkJob({ status: "killed" })), null);
     });
-    void it("sanitizes stray quotes/newlines in the id", () => {
-        const out = nudgeLine(mkJob({ id: 'bad"id\n' }));
+    void it("returns the jobs output nudge only for failed jobs", () => {
+        assert.equal(
+            nudgeLine(mkJob({ id: "job-3-7", status: "failed", exitCode: 1 })),
+            '  → jobs({ action: "output", jobId: "job-3-7" })'
+        );
+    });
+    void it("sanitizes stray quotes/newlines in the id (failed path)", () => {
+        const out = nudgeLine(mkJob({ id: 'bad"id\n', status: "failed", exitCode: 1 }));
         assert.ok(out);
         assert.ok(!out.includes('"id\n'));
         assert.ok(out.includes('"bad?id?"'));
@@ -131,10 +134,15 @@ void describe("nudgeLine", () => {
 });
 
 void describe("jobNoticeLines", () => {
-    void it("status + nudge for a completed job", () => {
+    void it("status only for a completed job (no nudge — Claude Code parity)", () => {
         const lines = jobNoticeLines(mkJob({ name: "tests" }));
-        assert.equal(lines.length, 2);
+        assert.equal(lines.length, 1);
         assert.match(lines[0], /^✓ tests/);
+    });
+    void it("status + nudge for a failed job", () => {
+        const lines = jobNoticeLines(mkJob({ status: "failed", exitCode: 2 }));
+        assert.equal(lines.length, 2);
+        assert.match(lines[0], /^✗/);
         assert.match(lines[1], /jobs\(\{ action: "output"/);
     });
     void it("just status, no nudge, for a killed job", () => {

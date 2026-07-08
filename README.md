@@ -210,6 +210,14 @@ A live pill widget keeps your running jobs in view — each with its duration an
 
 ## Releases
 
+### 1.1.5 — No more redundant acknowledgments (CC `notified` parity)
+
+A completion notice would fire even after the agent had already learned the job's outcome (via `jobs output`, `job_decide`, or `jobs attach`), and then *instruct* the agent to call `jobs output` — so the agent dutifully acknowledged every finished job, even ones it already handled. Fixed by matching Claude Code's notification philosophy exactly:
+
+- **Outcome-known suppression (`notified`-flag parity).** Any path that lets the agent learn a job's result — `jobs output`, `job_decide` (every decision), `jobs attach` — now sets the `outputConsumed` flag, so the pending completion notice is suppressed instead of re-telling the agent what it already knows. This is Claude Code's `markTaskNotified`.
+- **Completed jobs are bare.** A `completed` job's notice is now a plain status line (`✓ "npm test" (5s, job-1-1)`) with **no `→ jobs output` nudge**. Only `failed` jobs carry the nudge — they're the ones that need attention. Matches Claude Code's `"Background command X completed"` summary, which is informational, never imperative.
+- **Turn-boundary notices are passive.** The turn-boundary flush no longer wakes the agent (`triggerTurn: false`) — it queues behind the current turn and is picked up on the next natural one. This is Claude Code's `priority: 'later'`: system messages never starve user input and never spawn an unsolicited follow-up turn. (The idle-path flush still steers, since the user isn't engaged; the timed-out-job `job_decide` request still wakes.)
+
 ### 1.1.2 — One summary, not a wall of notices
 
 - **Background notices coalesce at the turn boundary.** Jobs and monitors that finish during a long agent turn no longer dump a wall of `[job-finished]` / `[bg-monitor-event]` lines after the agent's reply. They accumulate and flush as **one summary** when the turn ends (`agent_end`) — *"4 background events — 1 completed (job-19), 1 failed (job-30 exit 1); 2 monitors ended (API health, port 4000)."* While the agent is idle, a short fallback window coalesces instead. Monitor *stream* events (the matched lines you're watching) stay live.

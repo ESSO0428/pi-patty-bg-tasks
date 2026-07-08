@@ -48,10 +48,12 @@ export function startMonitorSession(args: {
     let windowStart = Date.now();
     let windowLines = 0;
 
-    // Stream events stay live (triggerTurn:true) — they carry data the agent is
-    // actively watching. The terminal notice (stream ended / stopped / failed)
-    // goes through the coalescer instead (see finishMonitor), so a batch of
-    // monitors ending doesn't add to the wall of notices.
+    // Stream events stay live but passive (delivered as a follow-up, no wake) —
+    // they carry data the agent is actively watching and surface on the agent's
+    // next natural turn without spawning an unsolicited one. The terminal
+    // notice (stream ended / stopped / failed) goes through the coalescer
+    // instead (see finishMonitor), so a batch of monitors ending doesn't add
+    // to the wall of notices.
     const emitEvent = (lines: string[]): void => {
         if (lines.length === 0) return;
         pi.sendMessage(

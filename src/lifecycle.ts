@@ -12,6 +12,7 @@ import { join as pathJoin } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     DELIVER_FOLLOWUP,
+    DELIVER_FOLLOWUP_WAKE,
     EVENT,
     MAX_CONCURRENT_JOBS,
     type Job,
@@ -160,9 +161,28 @@ export function ensureCompletionPromise(job: Job): void {
 /**
  * Mark a job "killed" and set the output-consumed flag, so the exit callback
  * does not emit a spurious completion notification on any termination path.
+ * Delegates the flag set to `markOutcomeKnown` so there's a single assignment
+ * site for `outputConsumed` (this can't drift if the flag ever gains side
+ * effects). `markTerminal` flips status to "killed" first, so the
+ * running-guard in `markOutcomeKnown` correctly lets the set through.
  */
 export function markKilledSilently(job: Job): void {
     markTerminal(job, "killed");
+    markOutcomeKnown(job);
+}
+
+/**
+ * Mark a job's outcome as already-known to the agent — Claude Code's `notified`
+ * flag in parity. Called whenever the agent learns the result through any path
+ * OTHER than the completion notice itself: `jobs output`, a `job_decide`
+ * decision, or `jobs attach` (terminal branch). The pending completion notice
+ * is then suppressed — at enqueue time (`enqueueFinished`) AND at flush time
+ * (`sendCoalescedNotice`) so a flag flipped while a job is parked mid-turn
+ * still takes effect. No-op for a still-running job (the agent hasn't seen the
+ * final outcome yet, so the later notice should fire).
+ */
+export function markOutcomeKnown(job: Job): void {
+    if (job.status === "running") return;
     job.outputConsumed = true;
 }
 
@@ -369,7 +389,7 @@ export function requestJobDecision(args: {
                 command: args.job.command,
             },
         },
-        DELIVER_FOLLOWUP
+        DELIVER_FOLLOWUP_WAKE
     );
 }
 

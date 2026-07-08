@@ -112,14 +112,21 @@ export type EventName = (typeof EVENT)[keyof typeof EVENT];
 // --- Deliver options ---
 /** Steer the message into the current/next turn AND wake the agent.
  *  Use when the message IS the answer to a question the agent must address
- *  now (a finished background job, a deadline decision). */
+ *  now (a finished background job while idle, a deadline decision). */
 export const DELIVER_STEER = { deliverAs: "steer", triggerTurn: true } as const;
-/** Queue the message behind the current turn; the agent picks it up when
- *  the user next engages or the current turn ends. Use for warnings and
- *  follow-ups the agent should see eventually but doesn't have to react
- *  to immediately. NOTE: sendMessage-only — `pi.sendUserMessage` rejects
- *  `triggerTurn` and takes just `{ deliverAs: "followUp" }`. */
-export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: true } as const;
+/** Queue the message behind the current turn as a PASSIVE follow-up. The agent
+ *  picks it up on its next natural turn (when the user re-engages or the
+ *  current turn ends) but it does NOT spawn a new turn on its own. This mirrors
+ *  Claude Code's `priority: 'later'` task-notification delivery: completions,
+ *  background notices, and monitor stream events are informational and never
+ *  force an unsolicited acknowledgment or starve user input.
+ *  NOTE: sendMessage-only — `pi.sendUserMessage` rejects `triggerTurn` and
+ *  takes just `{ deliverAs: "followUp" }`. */
+export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as const;
+/** Follow-up that ALSO wakes the agent (spawns a turn when idle). Reserved for
+ *  messages the agent must act on without waiting for the user to re-engage —
+ *  currently the timed-out-job decision request. */
+export const DELIVER_FOLLOWUP_WAKE = { deliverAs: "followUp", triggerTurn: true } as const;
 
 // --- UI context ---
 export interface UiContext {

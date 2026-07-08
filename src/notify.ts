@@ -126,7 +126,15 @@ export function flushTurnBoundaryNotices(
  *  either `notify` or `sendMessage` throws (typically a stale ctx after a
  *  session switch), the drained items are re-queued at the head of the
  *  pending buffers so the next attempt can retry them — preventing silent
- *  loss of completion notices. */
+ *  loss of completion notices.
+ *
+ *  Re-checks `outputConsumed` AFTER draining. A job can be enqueued while the
+ *  agent is mid-turn (outputConsumed still unset) and then have its outcome
+ *  learned via `jobs output` / `job_decide` later in the SAME turn, flipping
+ *  the flag while the job is parked in the buffer. Without this flush-time
+ *  filter, the turn-end notice would re-tell the agent about a job it just
+ *  handled — the exact redundancy this module exists to prevent. Already-
+ *  consumed jobs are dropped, never re-queued. */
 function sendCoalescedNotice(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
@@ -134,9 +142,15 @@ function sendCoalescedNotice(
     deliver: typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP
 ): void {
     clearFlushTimer(reg);
-    const jobs = reg.pendingFinished;
     const monitors = reg.pendingMonitorEnds;
-    if (jobs.length === 0 && monitors.length === 0) return;
+    // Flush-time suppression: drop jobs the agent already learned the outcome
+    // of while they were parked here (Claude Code's `notified`-flag parity).
+    const jobs = reg.pendingFinished.filter((j) => !j.outputConsumed);
+    if (jobs.length === 0 && monitors.length === 0) {
+        reg.pendingFinished = [];
+        reg.pendingMonitorEnds = [];
+        return;
+    }
     reg.pendingFinished = [];
     reg.pendingMonitorEnds = [];
 
@@ -175,8 +189,9 @@ function sendCoalescedNotice(
             deliver
         );
     } catch (err) {
-        // Banner went out but the agent didn't get the wake. Re-queue at the
-        // head so a retry surfaces the notice to the agent on the next pass.
+        // Banner went out but the agent didn't get the message. Re-queue at
+        // the head so a retry surfaces the notice to the agent on the next
+        // pass.
         requeueHead(reg, jobs, monitors);
         log.error("[bg-tasks] sendMessage failed, notice re-queued:", err);
         return;

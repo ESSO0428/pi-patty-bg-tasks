@@ -33,6 +33,7 @@ import { streamLog } from "../output.ts";
 import { searchLogs } from "../log-search.ts";
 import {
     ensureCompletionPromise,
+    markOutcomeKnown,
     markTerminal,
     terminateJobSilently,
 } from "../lifecycle.ts";
@@ -58,7 +59,7 @@ export function registerJobsTool(
             "search: regex-search all job output",
             "cleanup: purge terminal jobs",
             "stats: show aggregate metrics",
-            "After a background job's completion notice, call action: 'output' on it to read its result before claiming the task is done.",
+            "Completion notices are informational — call 'output' on a FAILED job, or on any job whose output is the deliverable (e.g. a test/build you must report). Don't call it just to acknowledge a completed job.",
         ],
         parameters: Type.Object({
             action: StringEnum(
@@ -142,6 +143,10 @@ async function outputAction(
 ): Promise<AgentToolResult<undefined>> {
     const job = findJob(reg, jobId);
     if (!job) throw new Error(`Job not found: ${jobId}`);
+    // The agent just read this job's outcome — suppress the completion notice
+    // so we don't re-tell it what it already knows (Claude Code's `notified`
+    // flag). No-op while still running.
+    markOutcomeKnown(job);
     const out = readLogTail(job, OUTPUT_PREVIEW_CHARS).trimEnd();
     const label = jobLabel(job);
     return {
@@ -255,6 +260,11 @@ async function attachAction(
 
     const message = `${label} finished. Status: ${job.status}`;
     ctx.ui.notify(message, job.status === "failed" ? "error" : "info");
+    // The attach result IS the outcome notification — mark it known so any
+    // pending completion notice is suppressed (CC `notified` parity). Covers
+    // both the "attached to an already-terminal job" and "waited then
+    // finished" cases; idempotent with the running-branch set at line 213.
+    markOutcomeKnown(job);
     return {
         content: [textBlock(`${message}. Use jobs output for the full log.`)],
         details: undefined,

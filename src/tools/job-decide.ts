@@ -12,7 +12,7 @@ import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type { BackgroundRegistry } from "../state.ts";
 import { OUTPUT_PREVIEW_CHARS } from "../types.ts";
 import { findJob, readLogTail, renderSidebar } from "../registry.ts";
-import { terminateJobSilently } from "../lifecycle.ts";
+import { markOutcomeKnown, terminateJobSilently } from "../lifecycle.ts";
 import { jobLabel, textBlock } from "../format.ts";
 
 /** `job_decide` 툴을 등록한다. */
@@ -49,6 +49,13 @@ export function registerJobDecideTool(
                     details: undefined,
                 };
             }
+
+            // The agent is resolving its decision on this job — it now knows
+            // the outcome. Suppress the pending completion notice so the agent
+            // isn't re-told about a job it just decided on (Claude Code's
+            // `notified`-flag parity). No-op while still running; the kill
+            // branch below also marks it silently via terminateJobSilently.
+            markOutcomeKnown(job);
 
             switch (p.decision) {
                 case "kill": {

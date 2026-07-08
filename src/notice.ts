@@ -61,10 +61,16 @@ export function statusLine(job: Job): string {
 }
 
 /** The steering line — the explicit tool call the agent should make next.
- *  Killed jobs are intentional cleanup: no nudge, the agent already knows.
- *  Returns null to signal "no nudge line." */
+ *
+ * Parity with Claude Code: a `completed` job is reported as a bare status
+ * line (its summary is the result — nothing more to do). Killed jobs are
+ * intentional cleanup the agent already knows about. Only a *failed* job
+ * needs the agent's attention, so only failures carry the nudge. This stops
+ * the agent from reflexively calling `jobs output` on every successful
+ * completion just because the notice told it to.
+ * Returns null to signal "no nudge line." */
 export function nudgeLine(job: Job): string | null {
-    if (job.status === "killed") return null;
+    if (job.status !== "failed") return null;
     return `  → ${jobsOutputInvocation(job.id)}`;
 }
 
