@@ -199,22 +199,28 @@ void describe("backgroundActiveForeground", () => {
 });
 
 void describe("requestJobDecision", () => {
-    void it("timeout background records pending decision and sends bg-timeout", () => {
+    void it("timeout background records pending decision and shows only a toast (no forced turn — CC parity)", () => {
         const reg = new BackgroundRegistry();
-        const sent: { customType?: string; details?: { jobId?: string } }[] = [];
+        const sent: { customType?: string }[] = [];
+        const toasts: string[] = [];
         const job = makeJob({ id: "job-timeout", command: "pnpm test" });
 
         requestJobDecision({
             reg,
-            pi: { sendMessage: (msg: { customType?: string; details?: { jobId?: string } }) => sent.push(msg) } as never,
-            ctx: { ui: { notify: () => {} } } as never,
+            pi: { sendMessage: (msg: { customType?: string }) => sent.push(msg) } as never,
+            ctx: { ui: { notify: (m: string) => toasts.push(m) } } as never,
             job,
             timeoutMs: 15_000,
         });
 
         assert.equal(reg.pendingDecisionJobId, "job-timeout");
-        assert.equal(sent[0]?.customType, EVENT.timeout);
-        assert.equal(sent[0]?.details?.jobId, "job-timeout");
+        // Claude Code just backgrounds on timeout — no steering message, no
+        // forced turn. The bash tool's own result tells the agent; only a
+        // human-facing toast fires here.
+        assert.equal(sent.length, 0, "no sendMessage on timeout (CC parity)");
+        assert.equal(toasts.length, 1);
+        assert.match(toasts[0], /Backgrounded/);
+        assert.match(toasts[0], /still running/);
     });
 });
 

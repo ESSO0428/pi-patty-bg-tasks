@@ -123,10 +123,6 @@ export const DELIVER_STEER = { deliverAs: "steer", triggerTurn: true } as const;
  *  NOTE: sendMessage-only — `pi.sendUserMessage` rejects `triggerTurn` and
  *  takes just `{ deliverAs: "followUp" }`. */
 export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as const;
-/** Follow-up that ALSO wakes the agent (spawns a turn when idle). Reserved for
- *  messages the agent must act on without waiting for the user to re-engage —
- *  currently the timed-out-job decision request. */
-export const DELIVER_FOLLOWUP_WAKE = { deliverAs: "followUp", triggerTurn: true } as const;
 
 // --- UI context ---
 export interface UiContext {

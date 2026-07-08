@@ -210,6 +210,15 @@ A live pill widget keeps your running jobs in view — each with its duration an
 
 ## Releases
 
+### 1.1.6 — Silent timeout backgrounding (CC parity)
+
+The 1.1.5 fix stopped the *completion* notice from forcing an acknowledgment, but the **timeout** itself was still interrupting: a `[bg-timeout]` message woke the agent and demanded a `job_decide (keep / kill / check)`, so the agent would call `job_decide`, then say *"Already killed"* — chatter around something that needs no decision. Verified against Claude Code's source: on timeout CC just silently slides the command into the background (`backgroundFn(shellId)`) — no message, no decision request, no forced turn. The bash tool's own *"Process backgrounded"* result is the agent's notification.
+
+- **No more `[bg-timeout]` steering message.** `requestJobDecision` no longer calls `sendMessage` at all. The auto-backgrounded command's status reaches the agent through the bash tool result (now annotated *"auto-backgrounded after Ns; still running — check with jobs output if needed"*), exactly like CC.
+- **Passive toast only.** The human still gets a subtle *"Backgrounded X after Ns; still running"* toast so it's visible, but the agent's turn is never interrupted.
+- **`job_decide` remains available** if the agent or user explicitly wants to keep/kill/check — it's just no longer forced.
+- Removed the now-unused `DELIVER_FOLLOWUP_WAKE` deliver constant (no path wakes on a system message anymore except the idle-path completion flush, which uses `DELIVER_STEER`).
+
 ### 1.1.5 — No more redundant acknowledgments (CC `notified` parity)
 
 A completion notice would fire even after the agent had already learned the job's outcome (via `jobs output`, `job_decide`, or `jobs attach`), and then *instruct* the agent to call `jobs output` — so the agent dutifully acknowledged every finished job, even ones it already handled. Fixed by matching Claude Code's notification philosophy exactly:

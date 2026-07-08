@@ -12,7 +12,6 @@ import { join as pathJoin } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     DELIVER_FOLLOWUP,
-    DELIVER_FOLLOWUP_WAKE,
     EVENT,
     MAX_CONCURRENT_JOBS,
     type Job,
@@ -359,9 +358,14 @@ export function notifyFinished(args: {
 }
 
 /**
- * Record a timeout decision request: a compact agent follow-up (so the agent
- * can decide via job_decide) plus a lightweight UI toast for the human. Keeps
- * the agent informed without the old boxed prompt.
+ * Record a timeout backgrounding: a lightweight UI toast for the human. Claude
+ * Code's behavior on timeout is to silently slide the command into the
+ * background — no forced turn, no decision request, no steering message. The
+ * bash tool's own "Process backgrounded as job-X" result is the agent's
+ * notification that the command moved; a later completion appears as a passive
+ * task-notification. We keep only a subtle toast so the human sees something
+ * happened. The agent can still use `job_decide` / `jobs` if it wants, but it
+ * is never interrupted to do so.
  */
 export function requestJobDecision(args: {
     reg: BackgroundRegistry;
@@ -373,24 +377,7 @@ export function requestJobDecision(args: {
     args.reg.pendingDecisionJobId = args.job.id;
     const label = `"${jobLabel(args.job)}"`;
     const elapsed = formatDuration(args.timeoutMs);
-
     args.ctx.ui.notify(`Backgrounded ${label} after ${elapsed}; still running.`, "info");
-
-    args.pi.sendMessage(
-        {
-            customType: EVENT.timeout,
-            content:
-                `Command ${args.job.id} still running after ${elapsed} — moved to background. ` +
-                `Decide with job_decide (keep / kill / check). Output: ${args.job.logPath}`,
-            display: true,
-            details: {
-                jobId: args.job.id,
-                logPath: args.job.logPath,
-                command: args.job.command,
-            },
-        },
-        DELIVER_FOLLOWUP_WAKE
-    );
 }
 
 // --- Helpers -------------------------------------------------------------

@@ -279,10 +279,14 @@ async function runForeground(args: {
 
         if (race.kind === "backgrounded") {
             promoteToBackground(race.reason);
+            const reason =
+                race.reason === "timeout"
+                    ? ` (auto-backgrounded after ${Math.round(timeoutMs / 1000)}s; still running — check with jobs output if needed)`
+                    : "";
             return {
                 content: [
                     textBlock(
-                        `Process backgrounded as ${id}\nCommand: ${command}\nPID: ${spawned.pid}\nOutput: ${logPath}`
+                        `Process backgrounded as ${id}${reason}\nCommand: ${command}\nPID: ${spawned.pid}\nOutput: ${logPath}`
                     ),
                 ],
                 details: undefined,
