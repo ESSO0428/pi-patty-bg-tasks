@@ -1,5 +1,5 @@
 {
-    "name": "pi-patty-bg-tasks",
+    "name": "@esso0428/pi-patty-bg-tasks",
     "version": "1.1.6",
     "description": "Background tasks extension for pi. Claude Code parity — auto-background after 120s, run_in_background flag, Ctrl+B manual background with live hint, streaming jobs attach, file-fd output capture, cooperative steering, agent_bg with progress streaming, and a monitor tool for per-event streaming (stdout lines / WebSocket frames).",
     "type": "module",
@@ -11,11 +11,11 @@
         "agent-bg",
         "monitor"
     ],
-    "author": "Patrick Rho",
+    "author": "ESSO0428",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/patty-io/pi-patty-bg-tasks.git"
+        "url": "git+https://github.com/ESSO0428/pi-patty-bg-tasks.git"
     },
     "files": [
         "src/",
