@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/pi-patty-bg-tasks"><img alt="npm" src="https://img.shields.io/npm/v/pi-patty-bg-tasks?color=cb3837&label=npm&logo=npm"></a>&nbsp;
+  <a href="https://www.npmjs.com/package/@esso0428/pi-patty-bg-tasks"><img alt="npm" src="https://img.shields.io/npm/v/@esso0428/pi-patty-bg-tasks?color=cb3837&label=npm&logo=npm"></a>&nbsp;
   <img alt="Pi v0.37+" src="https://img.shields.io/badge/Pi-v0.37%2B-5b50f0">&nbsp;
   <img alt="dependencies: zero" src="https://img.shields.io/badge/dependencies-zero-3fb950">&nbsp;
   <img alt="tmux: not required" src="https://img.shields.io/badge/tmux-not_required-3fb950">&nbsp;
@@ -21,13 +21,13 @@
 ## 安装
 
 ```
-pi install npm:pi-patty-bg-tasks
+pi install npm:@esso0428/pi-patty-bg-tasks
 ```
 
 或者直接从 GitHub 装:
 
 ```
-pi install git:github.com/patty-io/pi-patty-bg-tasks
+pi install git:github.com/ESSO0428/pi-patty-bg-tasks
 ```
 
 只需 Pi v0.37+,要求仅此一条 —— **零外部依赖**,也**不用 tmux**。后台作业就是普通的 Node.js 子进程,输出直接写进一个文件描述符。没什么要装的,也没什么要盯着的。
@@ -262,7 +262,7 @@ monitor({ ws: { url: "wss://events.example.com/stream" }, description: "部署�
 ## 开发
 
 ```
-git clone https://github.com/patty-io/pi-patty-bg-tasks.git
+git clone https://github.com/ESSO0428/pi-patty-bg-tasks.git
 cd pi-patty-bg-tasks
 pnpm install
 pnpm check    # 类型检查
@@ -283,8 +283,8 @@ pnpm test     # 运行测试
 
 ## 许可证
 
-[MIT](LICENSE) © Patty
+[MIT](LICENSE) © Patty · 由 [ESSO0428](https://github.com/ESSO0428) 維護的 Fork
 
 ## 作者
 
-**Patty** · [GitHub](https://github.com/patty-io)
+**Patty**（原作者）· [GitHub](https://github.com/patty-io)
