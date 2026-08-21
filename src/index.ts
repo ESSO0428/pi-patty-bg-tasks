@@ -44,10 +44,21 @@ interface PersistedState {
     jobCounter?: number;
 }
 
+/**
+ * Single shared registry for the whole process.
+ *
+ * IMPORTANT: this MUST be module-level, not created inside the factory.
+ * Pi invokes an extension's factory more than once (trust-bootstrap pass +
+ * final load, and again on /reload). A per-factory `new BackgroundRegistry()`
+ * creates a second registry: the `bash` execute injected via the
+ * ExtensionRunner prototype patch (defer-bash.ts) ends up bound to a different
+ * registry instance than the `jobs`/`bash_bg`/`monitor`/`agent_bg` tools
+ * (first-registration-wins), so auto-backgrounded jobs vanish from `jobs list`.
+ */
+const reg = new BackgroundRegistry();
+
 /** Extension entry point. */
 export default function (pi: ExtensionAPI): void {
-    const reg = new BackgroundRegistry();
-
     // ── Tool registration ─────────────────────────────────────────
     // NOTE: bash tool is NOT registered here to avoid init-time conflict with
     // display extensions (pi-tool-display, etc.) that also register a tool

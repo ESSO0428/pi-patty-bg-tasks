@@ -32,6 +32,11 @@ import { createBashExecute } from "./tools/bash.ts";
 
 const PATCH_MARK = Symbol("patty-bash-execute-patched");
 
+/** Guards against double-wrapping when the extension factory runs more than once
+ *  (pi's trust-bootstrap pass + final load + /reload). Re-patching would nest
+ *  wrappers and push duplicate fallback bash definitions. */
+let patchInstalled = false;
+
 /**
  * Install the prototype patch. Call once during extension init.
  * After this, whenever getAllRegisteredTools runs, any bash tool definition
@@ -41,6 +46,9 @@ export function patchBashExecute(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
 ): void {
+    if (patchInstalled) return;
+    patchInstalled = true;
+
     const pattyExecute = createBashExecute(reg, pi);
 
     const origMethod = ExtensionRunner.prototype.getAllRegisteredTools;
