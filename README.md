@@ -154,7 +154,6 @@ Keep your hands on the keyboard.
 |----------|--------|
 | **Ctrl+B** | Background the running foreground command — agent keeps working (matches Claude Code). Inside tmux, press it twice (tmux owns Ctrl+B). |
 | **Ctrl+Shift+B** | Same as Ctrl+B (alias) |
-| **Ctrl+Shift+J** | Open the background task manager |
 | **Shift+Down** | Open the background task manager |
 | **Ctrl+Shift+X** | Kill the most recent running job |
 

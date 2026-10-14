@@ -154,7 +154,6 @@ monitor({ ws: { url: "wss://events.example.com/stream" }, description: "배포 �
 |-------|------|
 | **Ctrl+B** | 실행 중인 포그라운드 명령을 백그라운드로 — 에이전트는 계속 작업 (Claude Code와 동일). tmux 안에서는 두 번 누르세요 (tmux가 Ctrl+B를 차지함). |
 | **Ctrl+Shift+B** | Ctrl+B와 동일 (별칭) |
-| **Ctrl+Shift+J** | 백그라운드 작업 관리자 열기 |
 | **Shift+Down** | 백그라운드 작업 관리자 열기 |
 | **Ctrl+Shift+X** | 가장 최근에 실행 중인 잡 종료 |
 

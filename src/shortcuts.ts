@@ -2,7 +2,7 @@
  * Keyboard shortcut registration.
  *
  *   - Ctrl+B (and Ctrl+Shift+B alias): move the foreground bash to background
- *   - Ctrl+Shift+J / Shift+Down: open the background task manager
+ *   - Shift+Down: open the background task manager
  *   - Ctrl+Shift+X: kill the most recent running job
  */
 
@@ -34,11 +34,6 @@ export function registerShortcuts(
     pi.registerShortcut("ctrl+shift+b", {
         description: "Background the current foreground process (alias for Ctrl+B)",
         handler: async (ctx) => handleCtrlB(reg, pi, ctx),
-    });
-
-    pi.registerShortcut("ctrl+shift+j", {
-        description: "Open background task manager",
-        handler: async (ctx) => openBgListPanel(reg, ctx),
     });
 
     pi.registerShortcut("shift+down", {

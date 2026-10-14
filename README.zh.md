@@ -154,7 +154,6 @@ monitor({ ws: { url: "wss://events.example.com/stream" }, description: "部署�
 |-------|------|
 | **Ctrl+B** | 把正在运行的前台命令转后台 —— 代理继续干活(对应 Claude Code)。在 tmux 里要按两下(tmux 占用了 Ctrl+B)。 |
 | **Ctrl+Shift+B** | 等同 Ctrl+B(别名) |
-| **Ctrl+Shift+J** | 打开后台作业管理器 |
 | **Shift+Down** | 打开后台作业管理器 |
 | **Ctrl+Shift+X** | 终止最近一个运行中的作业 |
 
